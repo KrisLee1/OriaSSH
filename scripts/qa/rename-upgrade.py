@@ -92,7 +92,8 @@ foreach ($dir in 'DesktopDirectory','Programs') {
 
 def macos(temp, assets, arch, profile):
     mount, installed = temp / "volume", temp / "OriaTunnel.app"
-    run("hdiutil", "attach", str(previous(temp, arch + ".dmg")), "-mountpoint", str(mount), "-nobrowse", "-readonly")
+    dmg_arch = "x64" if arch == "x86_64" else arch
+    run("hdiutil", "attach", str(previous(temp, dmg_arch + ".dmg")), "-mountpoint", str(mount), "-nobrowse", "-readonly")
     try:
         run("ditto", str(mount / installed.name), str(installed))
     finally:
