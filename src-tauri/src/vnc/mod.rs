@@ -724,6 +724,16 @@ fn windows_protocol_handler(scheme: windows::core::PCWSTR) -> windows::core::Res
     Err(ERROR_NO_ASSOCIATION.to_hresult().into())
 }
 
+#[cfg(windows)]
+fn windows_vnc_prog_id(identifier: &str, product_name: &str) -> String {
+    // Match OriaVncClass in vnc-installer.nsh across product renames.
+    if identifier == "com.oria-tunnel" {
+        "OriaTunnel.VNC".into()
+    } else {
+        format!("{product_name}.VNC")
+    }
+}
+
 #[tauri::command]
 pub fn is_default_vnc(app: AppHandle) -> bool {
     #[cfg(target_os = "macos")]
@@ -747,8 +757,7 @@ pub fn is_default_vnc(app: AppHandle) -> bool {
             },
         };
 
-        // Match the ProgID registered by vnc-installer.nsh for this product.
-        let expected = format!("{}.VNC", app.package_info().name);
+        let expected = windows_vnc_prog_id(&app.config().identifier, &app.package_info().name);
         let mut buffer = vec![0; expected.encode_utf16().count() + 1];
         let mut length = buffer.len() as u32;
         let result = unsafe {

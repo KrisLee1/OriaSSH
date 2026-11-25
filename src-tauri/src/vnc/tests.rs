@@ -13,6 +13,19 @@ fn displayed_user(
 
 #[cfg(windows)]
 #[test]
+fn windows_vnc_prog_id_survives_product_rename() {
+    assert_eq!(
+        windows_vnc_prog_id("com.oria-tunnel", "OriaSSH"),
+        "OriaTunnel.VNC"
+    );
+    assert_eq!(
+        windows_vnc_prog_id("org.example.qa", "Viewer"),
+        "Viewer.VNC"
+    );
+}
+
+#[cfg(windows)]
+#[test]
 fn empty_protocol_marker_is_not_an_executable_handler() {
     use windows::core::{w, HSTRING, PCWSTR};
     use windows_sys::Win32::System::Registry::{
