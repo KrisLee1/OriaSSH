@@ -13,7 +13,7 @@
   简体中文 · <a href="docs/readme/README.zh-TW.md">繁體中文</a> · <a href="docs/readme/README.en.md">English</a> · <a href="docs/readme/README.ja.md">日本語</a> · <a href="docs/readme/README.ko.md">한국어</a> · <a href="docs/readme/README.de.md">Deutsch</a> · <a href="docs/readme/README.fr.md">Français</a> · <a href="docs/readme/README.ru.md">Русский</a>
 </p>
 
-**[下载安装](#下载与安装)** · [快速上手](#快速上手) · [使用指南](docs/USAGE.md) · [在线演示](https://oriamade.com/zh-CN/oria-tunnel#workspace)
+**[下载安装](#下载与安装)** · [快速上手](#快速上手) · [使用指南](docs/USAGE.md) · [在线演示](https://oriamade.com/zh-CN/oria-ssh#workspace)
 
 ## 核心功能
 
@@ -45,25 +45,25 @@
 
 ## 下载与安装
 
-OriaSSH 原名 OriaTunnel。下方 v0.5.0 安装包和安装后的应用仍显示旧名。
+OriaSSH 原名 OriaTunnel。使用 v0.5.0 的用户可在「关于」中检查更新。
 
-| 平台 | v0.5.0 安装包 | 安装方式 |
+| 平台 | v1.0.0 安装包 | 安装方式 |
 | --- | --- | --- |
-| macOS | [Apple Silicon](https://github.com/KrisLee1/OriaTunnel/releases/download/v0.5.0/OriaTunnel_0.5.0_aarch64.dmg) · [Intel](https://github.com/KrisLee1/OriaTunnel/releases/download/v0.5.0/OriaTunnel_0.5.0_x64.dmg) | 打开磁盘映像，将 OriaTunnel 拖入「应用程序」。 |
-| Windows | [x64](https://github.com/KrisLee1/OriaTunnel/releases/download/v0.5.0/OriaTunnel_0.5.0_x64-setup.exe) · [ARM64](https://github.com/KrisLee1/OriaTunnel/releases/download/v0.5.0/OriaTunnel_0.5.0_arm64-setup.exe) | 运行安装程序，按向导完成安装。 |
+| macOS | [Apple Silicon](https://github.com/KrisLee1/OriaSSH/releases/download/v1.0.0/OriaSSH_1.0.0_aarch64.dmg) · [Intel](https://github.com/KrisLee1/OriaSSH/releases/download/v1.0.0/OriaSSH_1.0.0_x64.dmg) | 打开磁盘映像，将 OriaSSH 拖入「应用程序」。 |
+| Windows | [x64](https://github.com/KrisLee1/OriaSSH/releases/download/v1.0.0/OriaSSH_1.0.0_x64-setup.exe) · [ARM64](https://github.com/KrisLee1/OriaSSH/releases/download/v1.0.0/OriaSSH_1.0.0_arm64-setup.exe) | 运行安装程序，按向导完成安装。 |
 
 ### 版本记录
 
-**v0.5.0** 新增可拖放的终端组合面板，为 Windows SSH 主机提供 PowerShell 智能编辑，并改善大目录传输、断线续传和面板响应。已安装的用户可在「关于」中检查更新。
+**v1.0.0** 将主机、服务和转发集中到连接图。可在主机卡切换 SSH 账号，查看服务运行状态与主机日志，或选择要分享的工作区配置。
 
-[本版更新说明](docs/releases/v0.5.0.md) · [所有版本](https://github.com/KrisLee1/OriaSSH/releases)
+[本版更新说明](docs/releases/v1.0.0.md) · [所有版本](https://github.com/KrisLee1/OriaSSH/releases)
 
 ## 快速上手
 
 假设网页服务已在 SSH 服务器的 `3000` 端口运行，通过以下三步即可从本机访问。
 
 1. **添加主机**。点击「添加主机」，从 SSH 配置中选择主机，或手动填写地址、端口和用户名。
-2. **创建转发**。点击「新建转发」，选择该主机和「本地转发（L）」。本机监听填 `127.0.0.1:13000`，目标填 `127.0.0.1:3000`（SSH 服务器自身）。
+2. **创建转发**。从「此电脑」边缘向画布空白处拖出一条线，选择主机与本地转发（L）。本机监听填 `127.0.0.1:13000`，目标填 `127.0.0.1:3000`（SSH 服务器自身）。
 3. **打开网页**。点击「保存并启动」，按提示核对服务器指纹并完成认证。规则显示「监听中」后，在本机浏览器打开 `http://127.0.0.1:13000`。
 
 下次使用时，直接启动已保存的规则即可。如果规则已显示「监听中」但网页打不开，请先确认远端服务已启动，并检查目标端口。[查看状态与排查问题](docs/USAGE.md#查看状态与排查问题)
@@ -76,24 +76,15 @@ OriaSSH 原名 OriaTunnel。下方 v0.5.0 安装包和安装后的应用仍显�
 | 让服务器访问本机正在开发的服务 | 远程转发（R） | 在服务器上连接远端监听端口 |
 | 通过同一台 SSH 主机访问多个内网地址 | 动态代理（D） | 打开独立代理浏览器，或让客户端使用本机 SOCKS5 代理 |
 
-如果团队已经准备好主机和规则，可从转发页选择「导入配置」，预览后补全自己的认证信息。导入的服务模板需核对命令并启用后才能执行。[使用现成配置](docs/USAGE.md#使用现成配置)
+如果团队已经准备好主机和规则，可从「设置 → 配置文件」选择「导入配置」，预览后补全自己的认证信息。导入的服务模板需核对命令并启用后才能执行。[使用现成配置](docs/USAGE.md#使用现成配置)
 
 ## 界面预览
 
-这些深浅主题截图取自更名前的官网演示，使用示例数据。
+深浅主题截图取自 OriaSSH 官网的交互演示，使用示例数据。
 
-| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/connection-map-dark.png"><img src="docs/assets/screenshots/connection-map-light.png" alt="连接图"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/terminal-dark.png"><img src="docs/assets/screenshots/terminal-light.png" alt="智能终端命令库"></picture> |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/connection-map-dark.png"><img src="docs/assets/screenshots/connection-map-light.png" alt="连接图"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/terminal-dark.png"><img src="docs/assets/screenshots/terminal-light.png" alt="终端分屏"></picture> |
 | :---: | :---: |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/files-dark.png"><img src="docs/assets/screenshots/files-light.png" alt="文件传输队列"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/vnc-dark.png"><img src="docs/assets/screenshots/vnc-light.png" alt="VNC 远程桌面"></picture> |
-
-<details>
-<summary>更多界面：转发列表、服务、主机与活动日志</summary>
-
-| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/forwards-dark.png"><img src="docs/assets/screenshots/forwards-light.png" alt="转发列表"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/services-dark.png"><img src="docs/assets/screenshots/services-light.png" alt="服务列表"></picture> |
-| :---: | :---: |
-| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/hosts-dark.png"><img src="docs/assets/screenshots/hosts-light.png" alt="SSH 主机"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/logs-dark.png"><img src="docs/assets/screenshots/logs-light.png" alt="活动日志"></picture> |
-
-</details>
 
 ## 文档与支持
 

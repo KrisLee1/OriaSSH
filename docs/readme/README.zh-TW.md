@@ -13,7 +13,7 @@
   <a href="../../README.md">简体中文</a> · 繁體中文 · <a href="README.en.md">English</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.de.md">Deutsch</a> · <a href="README.fr.md">Français</a> · <a href="README.ru.md">Русский</a>
 </p>
 
-**[下載與安裝](#下載與安裝)** · [快速上手](#快速上手) · [完整使用指南（簡體中文）](../USAGE.md) · [線上示範（簡體中文）](https://oriamade.com/zh-CN/oria-tunnel#workspace)
+**[下載與安裝](#下載與安裝)** · [快速上手](#快速上手) · [完整使用指南（簡體中文）](../USAGE.md) · [線上示範（簡體中文）](https://oriamade.com/zh-CN/oria-ssh#workspace)
 
 ## 功能特色
 
@@ -45,25 +45,25 @@
 
 ## 下載與安裝
 
-OriaSSH 原名 OriaTunnel。下方 v0.5.0 安裝檔及安裝後的應用程式仍使用舊名稱。
+OriaSSH 原名 OriaTunnel。使用 v0.5.0 的使用者可在「關於」中檢查更新。
 
-| 平台 | 安裝檔 v0.5.0 | 安裝方式 |
+| 平台 | 安裝檔 v1.0.0 | 安裝方式 |
 | --- | --- | --- |
-| macOS | [Apple Silicon](https://github.com/KrisLee1/OriaTunnel/releases/download/v0.5.0/OriaTunnel_0.5.0_aarch64.dmg) · [Intel](https://github.com/KrisLee1/OriaTunnel/releases/download/v0.5.0/OriaTunnel_0.5.0_x64.dmg) | 開啟磁碟映像檔，將 OriaTunnel 拖入「應用程式」。 |
-| Windows | [x64](https://github.com/KrisLee1/OriaTunnel/releases/download/v0.5.0/OriaTunnel_0.5.0_x64-setup.exe) · [ARM64](https://github.com/KrisLee1/OriaTunnel/releases/download/v0.5.0/OriaTunnel_0.5.0_arm64-setup.exe) | 執行安裝程式，依畫面提示完成安裝。 |
+| macOS | [Apple Silicon](https://github.com/KrisLee1/OriaSSH/releases/download/v1.0.0/OriaSSH_1.0.0_aarch64.dmg) · [Intel](https://github.com/KrisLee1/OriaSSH/releases/download/v1.0.0/OriaSSH_1.0.0_x64.dmg) | 開啟磁碟映像檔，將 OriaSSH 拖入「應用程式」。 |
+| Windows | [x64](https://github.com/KrisLee1/OriaSSH/releases/download/v1.0.0/OriaSSH_1.0.0_x64-setup.exe) · [ARM64](https://github.com/KrisLee1/OriaSSH/releases/download/v1.0.0/OriaSSH_1.0.0_arm64-setup.exe) | 執行安裝程式，依畫面提示完成安裝。 |
 
 ### 版本記錄
 
-**v0.5.0** · 新增可拖放的終端機組合面板，為 Windows SSH 主機提供 PowerShell 智慧編輯，並改善大型目錄傳輸、斷線續傳和面板反應。已安裝的使用者可在「關於」中檢查更新。
+**v1.0.0** 將主機、服務與轉送集中在連線圖。可在主機卡切換 SSH 帳號、查看服務狀態與主機記錄，也能選擇要分享的工作區設定。
 
-[本版更新說明（簡體中文）](../releases/v0.5.0.md) · [所有版本](https://github.com/KrisLee1/OriaSSH/releases)
+[本版更新說明（簡體中文）](../releases/v1.0.0.md) · [所有版本](https://github.com/KrisLee1/OriaSSH/releases)
 
 ## 快速上手
 
 假設網頁服務已在 SSH 伺服器的 3000 連接埠執行，透過以下三步即可從本機存取。
 
 1. 開啟 OriaSSH，選擇「新增主機」，從 SSH 設定中找到的主機中選取，或手動填寫連線資訊。尋找主機只會讀取設定，不會自動連線。
-2. 選擇「新增轉送」、主機與「本機轉送（L）」。本機監聽位址填入 `127.0.0.1:13000`，目標填入 SSH 伺服器本身的 `127.0.0.1:3000`。
+2. 從「此電腦」邊緣拖曳到畫布空白處，選擇主機與本機轉送（L）。本機監聽位址填入 `127.0.0.1:13000`，目標填入 SSH 伺服器本身的 `127.0.0.1:3000`。
 3. 選擇「儲存並啟動」，依提示完成驗證，並在首次連線時核對伺服器指紋。 規則顯示「監聽中」後，在本機瀏覽器開啟 `http://127.0.0.1:13000`。
 
 下次直接啟動已儲存的規則即可。若網頁無法開啟，請檢查遠端服務是否已在目標連接埠執行。 [疑難排解（簡體中文）](../USAGE.md#查看状态与排查问题)
@@ -76,24 +76,15 @@ OriaSSH 原名 OriaTunnel。下方 v0.5.0 安裝檔及安裝後的應用程式�
 | **R · 遠端轉送** | 讓伺服器存取這部電腦上的開發服務 | 在伺服器端存取監聽連接埠，透過 SSH 連線至本機服務 |
 | **D · 動態代理** | 透過 SSH 主機存取多個內部網路位址 | 從選單開啟獨立代理瀏覽器，或為其他用戶端設定本機 SOCKS5 代理 |
 
-已有 OriaSSH 設定檔時，可在轉送頁選擇「匯入設定」，預覽後補齊本機驗證資訊，再手動啟動。匯入的服務範本需先核對並啟用執行。詳見[使用現成設定（簡體中文）](../USAGE.md#使用现成配置)。
+已有 OriaSSH 設定檔時，可在「設定 → 設定檔」選擇「匯入設定」，預覽後補齊本機驗證資訊，再手動啟動。匯入的服務範本需先核對並啟用執行。詳見[使用現成設定（簡體中文）](../USAGE.md#使用现成配置)。
 
 ## 介面預覽
 
-這些深淺主題截圖取自更名前的官網示範，使用範例資料。
+深淺主題截圖取自 OriaSSH 官網的互動示範，使用範例資料。
 
-| <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/connection-map-dark.png"><img src="../assets/screenshots/connection-map-light.png" alt="連線圖"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/terminal-dark.png"><img src="../assets/screenshots/terminal-light.png" alt="智慧終端機指令庫"></picture> |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/connection-map-dark.png"><img src="../assets/screenshots/connection-map-light.png" alt="連線圖"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/terminal-dark.png"><img src="../assets/screenshots/terminal-light.png" alt="終端機分割畫面"></picture> |
 | :---: | :---: |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/files-dark.png"><img src="../assets/screenshots/files-light.png" alt="檔案傳輸佇列"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/vnc-dark.png"><img src="../assets/screenshots/vnc-light.png" alt="VNC 遠端桌面"></picture> |
-
-<details>
-<summary>更多介面</summary>
-
-| <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/forwards-dark.png"><img src="../assets/screenshots/forwards-light.png" alt="轉送清單"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/services-dark.png"><img src="../assets/screenshots/services-light.png" alt="服務清單"></picture> |
-| :---: | :---: |
-| <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/hosts-dark.png"><img src="../assets/screenshots/hosts-light.png" alt="SSH 主機"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/logs-dark.png"><img src="../assets/screenshots/logs-light.png" alt="活動記錄"></picture> |
-
-</details>
 
 ## 文件與支援
 

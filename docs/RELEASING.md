@@ -26,15 +26,17 @@
    )
    ```
 
-4. 将本次更名改动合入 `master` 后再启动发布工作流，其中的仓库名判断已改为 `KrisLee1/OriaSSH`。下次发行使用高于 0.5.0 的版本，先在隔离的 macOS 和 Windows 安装中从 v0.5.0 更新，检查重启、工作区、登录启动及 VNC 关联。Windows 同时核对已有安装目录、卸载条目和快捷方式。
+4. 更名已合入 `master`，发布工作流使用 `KrisLee1/OriaSSH`。发布 v1.0.0 前，须在隔离的 macOS 和 Windows 安装中从 v0.5.0 更新，检查重启、工作区、登录启动及 VNC 关联。Windows 同时核对已有安装目录、卸载条目和快捷方式。
 
 macOS 应用内更新替换现有的应用包。原来装在 `/Applications/OriaTunnel.app` 的副本可继续使用该路径，应用内显示 OriaSSH。新的安装映像提供 `OriaSSH.app`。
 
-其他仓库若通过 `uses:` 引用由本仓库提供的 GitHub Action，需更新引用。项目级 GitHub Pages 站点也需单独检查访问地址。官网目前沿用已上线的 `oria-tunnel` 路径，网站切换时为旧路径设置跳转。[GitHub 仓库更名说明](https://docs.github.com/en/repositories/creating-and-managing-repositories/renaming-a-repository)
+其他仓库若通过 `uses:` 引用由本仓库提供的 GitHub Action，需更新引用。项目级 GitHub Pages 站点也需单独检查访问地址。README 的官网演示入口使用 `/oria-ssh#workspace`。部署新版官网时应同时启用旧产品路径到新路径的跳转。[GitHub 仓库更名说明](https://docs.github.com/en/repositories/creating-and-managing-repositories/renaming-a-repository)
+
+v1.0.0 的四个平台在 GitHub 托管运行器中安装经过 SHA-256 核对的 v0.5.0，再用本次签名产物覆盖升级。Windows 检查安装目录、卸载条目、快捷方式、登录启动项和 VNC 注册；macOS 在旧应用路径启动新版并检查签名、可执行文件和 VNC 声明。两个系统都使用隔离工作区检查重启后的配置。
 
 ## 版本准备与本地预检
 
-0.5.0 的更新正文位于 [v0.5.0.md](releases/v0.5.0.md)。先同步四个应用版本文件，再运行下面的本地检查；`tools/update-verifier` 是独立验证工具，不随应用升版。签名测试中的历史版本与公开签名夹具保持绑定，不应批量替换为当前版本。
+1.0.0 的更新正文位于 [v1.0.0.md](releases/v1.0.0.md)。先同步四个应用版本文件，再运行下面的本地检查；`tools/update-verifier` 是独立验证工具，不随应用升版。签名测试中的历史版本与公开签名夹具保持绑定，不应批量替换为当前版本。
 
 ```sh
 pnpm test
@@ -90,8 +92,8 @@ macOS 工作流创建临时钥匙串和 notarytool 配置，结束后删除证�
 
 ```sh
 # 先完成各版本文件更新并提交；示例标签须替换为实际源码版本。
-git tag v0.5.0
-git push origin v0.5.0
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
 不要移动已有正式版本标签，也不要覆盖已公开的同版本资产。失败的同源提交草稿允许重新构建并替换资产。修复代码后重建尚未公开的草稿时，在手动 `draft` 模式填写 `replaceDraftCommit` 为草稿原来的完整 40 位 SHA；元数据必须匹配，且新提交须为原提交的后继。已有版本标签仍须指向当前源码，不移动标签。四平台新产物全部通过验证后才替换草稿资产；已公开版本只能通过更高版本修复。构建与正式发布共用并发锁，避免汇总时发布不完整草稿。

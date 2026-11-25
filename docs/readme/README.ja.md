@@ -13,7 +13,7 @@
   <a href="../../README.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.en.md">English</a> · 日本語 · <a href="README.ko.md">한국어</a> · <a href="README.de.md">Deutsch</a> · <a href="README.fr.md">Français</a> · <a href="README.ru.md">Русский</a>
 </p>
 
-**[ダウンロードとインストール](#ダウンロードとインストール)** · [クイックスタート](#クイックスタート) · [詳しいユーザーガイド（中国語・簡体字）](../USAGE.md) · [オンラインデモ（簡体字中国語）](https://oriamade.com/zh-CN/oria-tunnel#workspace)
+**[ダウンロードとインストール](#ダウンロードとインストール)** · [クイックスタート](#クイックスタート) · [詳しいユーザーガイド（中国語・簡体字）](../USAGE.md) · [オンラインデモ（簡体字中国語）](https://oriamade.com/zh-CN/oria-ssh#workspace)
 
 ## できること
 
@@ -45,25 +45,25 @@
 
 ## ダウンロードとインストール
 
-OriaSSH の旧称は OriaTunnel です。以下の v0.5.0 のインストーラーとインストール後のアプリには旧名が表示されます。
+OriaSSH の旧称は OriaTunnel です。v0.5.0 では「このアプリについて」から更新を確認できます。
 
-| OS | インストーラー v0.5.0 | インストール方法 |
+| OS | インストーラー v1.0.0 | インストール方法 |
 | --- | --- | --- |
-| macOS | [Apple Silicon](https://github.com/KrisLee1/OriaTunnel/releases/download/v0.5.0/OriaTunnel_0.5.0_aarch64.dmg) · [Intel](https://github.com/KrisLee1/OriaTunnel/releases/download/v0.5.0/OriaTunnel_0.5.0_x64.dmg) | ディスクイメージを開き、OriaTunnel を「アプリケーション」にドラッグします。 |
-| Windows | [x64](https://github.com/KrisLee1/OriaTunnel/releases/download/v0.5.0/OriaTunnel_0.5.0_x64-setup.exe) · [ARM64](https://github.com/KrisLee1/OriaTunnel/releases/download/v0.5.0/OriaTunnel_0.5.0_arm64-setup.exe) | インストーラーを実行し、画面の案内に従います。 |
+| macOS | [Apple Silicon](https://github.com/KrisLee1/OriaSSH/releases/download/v1.0.0/OriaSSH_1.0.0_aarch64.dmg) · [Intel](https://github.com/KrisLee1/OriaSSH/releases/download/v1.0.0/OriaSSH_1.0.0_x64.dmg) | ディスクイメージを開き、OriaSSH を「アプリケーション」にドラッグします。 |
+| Windows | [x64](https://github.com/KrisLee1/OriaSSH/releases/download/v1.0.0/OriaSSH_1.0.0_x64-setup.exe) · [ARM64](https://github.com/KrisLee1/OriaSSH/releases/download/v1.0.0/OriaSSH_1.0.0_arm64-setup.exe) | インストーラーを実行し、画面の案内に従います。 |
 
 ### 更新履歴
 
-**v0.5.0** · ドラッグ＆ドロップでターミナルを分割できるようになり、Windows SSH ホストでは PowerShell の入力補助が使えます。大規模なフォルダーの転送、切断後の再開、パネルの応答性も改善しました。「このアプリについて」から更新を確認できます。
+**v1.0.0** ではホスト、サービス、転送を接続マップにまとめました。ホストカードから SSH アカウントの切り替え、サービスの状態確認、ホストログの表示ができます。共有する設定も個別に選べます。
 
-[リリースノート（簡体字中国語）](../releases/v0.5.0.md) · [すべてのバージョン](https://github.com/KrisLee1/OriaSSH/releases)
+[リリースノート（簡体字中国語）](../releases/v1.0.0.md) · [すべてのバージョン](https://github.com/KrisLee1/OriaSSH/releases)
 
 ## クイックスタート
 
 SSH サーバーのポート 3000 で動作している Web サービスを、手元のブラウザーで開く例です。
 
 1. OriaSSH を開き、**「ホストを追加」**を選択します。SSH 設定から検出したホストを選ぶか、接続情報を手動で入力します。検出は設定を読み取るだけで、自動的に接続することはありません。
-2. 「新しい転送」でホストとローカル転送（L）を選びます。ローカルの待ち受け先を `127.0.0.1:13000`、接続先を SSH サーバー上の `127.0.0.1:3000` に設定します。
+2. ローカルコンピューターのカードの端からキャンバスの空白部分へドラッグし、ホストとローカル転送（L）を選びます。待受アドレスに `127.0.0.1:13000`、SSH サーバー側の宛先に `127.0.0.1:3000` を指定します。
 3. **「保存して開始」**を選択し、表示される案内に従って認証します。初回の接続ではサーバーのフィンガープリントを確認してください。 「待ち受け中」と表示されたら、手元のブラウザーで `http://127.0.0.1:13000` を開きます。
 
 次回からは保存したルールを開始するだけです。ページが開かない場合は、接続先のポートでサービスが動作しているか確認してください。 [トラブルシューティング（簡体字中国語）](../USAGE.md#查看状态与排查问题)
@@ -76,24 +76,15 @@ SSH サーバーのポート 3000 で動作している Web サービスを、�
 | **R · リモート転送** | このコンピュータで動く開発用サービスに、サーバーからアクセスする | サーバー上の待ち受けポートに接続すると、SSH 経由でローカルのサービスに届きます |
 | **D · 動的転送** | SSH ホストを経由して複数の内部アドレスにアクセスする | メニューから独立したプロキシブラウザーを開くか、別のクライアントに SOCKS5 を設定します |
 
-OriaSSH の設定ファイルがある場合は、転送ページから読み込み、内容を確認して自分の認証情報を設定してから開始します。読み込んだサービステンプレートは確認後に実行を有効にする必要があります。[既存の設定を使う（簡体字中国語）](../USAGE.md#使用现成配置)を参照してください。
+OriaSSH の設定ファイルがある場合は、「設定 → 設定ファイル」から読み込み、内容を確認して自分の認証情報を設定してから開始します。読み込んだサービステンプレートは確認後に実行を有効にする必要があります。[既存の設定を使う（簡体字中国語）](../USAGE.md#使用现成配置)を参照してください。
 
 ## スクリーンショット
 
-ライト・ダーク両テーマの画像は、名称変更前の公式サイトのデモをサンプルデータで撮影したものです。
+ライト・ダーク両テーマの画像は、OriaSSH 公式サイトの対話型デモをサンプルデータで撮影したものです。
 
-| <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/connection-map-dark.png"><img src="../assets/screenshots/connection-map-light.png" alt="接続マップ"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/terminal-dark.png"><img src="../assets/screenshots/terminal-light.png" alt="ターミナルのコマンドライブラリ"></picture> |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/connection-map-dark.png"><img src="../assets/screenshots/connection-map-light.png" alt="接続マップ"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/terminal-dark.png"><img src="../assets/screenshots/terminal-light.png" alt="ターミナルの分割表示"></picture> |
 | :---: | :---: |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/files-dark.png"><img src="../assets/screenshots/files-light.png" alt="ファイル転送キュー"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/vnc-dark.png"><img src="../assets/screenshots/vnc-light.png" alt="VNC リモートデスクトップ"></picture> |
-
-<details>
-<summary>その他の画面</summary>
-
-| <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/forwards-dark.png"><img src="../assets/screenshots/forwards-light.png" alt="転送ルール"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/services-dark.png"><img src="../assets/screenshots/services-light.png" alt="サービス"></picture> |
-| :---: | :---: |
-| <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/hosts-dark.png"><img src="../assets/screenshots/hosts-light.png" alt="SSH ホスト"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/logs-dark.png"><img src="../assets/screenshots/logs-light.png" alt="アクティビティログ"></picture> |
-
-</details>
 
 ## ドキュメントとサポート
 

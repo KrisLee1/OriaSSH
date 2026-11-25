@@ -13,7 +13,7 @@
   <a href="../../README.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.en.md">English</a> · <a href="README.ja.md">日本語</a> · 한국어 · <a href="README.de.md">Deutsch</a> · <a href="README.fr.md">Français</a> · <a href="README.ru.md">Русский</a>
 </p>
 
-**[다운로드 및 설치](#다운로드-및-설치)** · [빠른 시작](#빠른-시작) · [전체 사용자 가이드(중국어 간체)](../USAGE.md) · [온라인 데모(중국어 간체)](https://oriamade.com/zh-CN/oria-tunnel#workspace)
+**[다운로드 및 설치](#다운로드-및-설치)** · [빠른 시작](#빠른-시작) · [전체 사용자 가이드(중국어 간체)](../USAGE.md) · [온라인 데모(중국어 간체)](https://oriamade.com/zh-CN/oria-ssh#workspace)
 
 ## 주요 기능
 
@@ -45,25 +45,25 @@
 
 ## 다운로드 및 설치
 
-OriaSSH의 이전 이름은 OriaTunnel입니다. 아래 v0.5.0 설치 파일과 설치된 앱에는 이전 이름이 표시됩니다.
+OriaSSH의 이전 이름은 OriaTunnel입니다. v0.5.0에서는 앱 정보에서 업데이트를 확인할 수 있습니다.
 
-| 플랫폼 | 설치 파일 v0.5.0 | 설치 방법 |
+| 플랫폼 | 설치 파일 v1.0.0 | 설치 방법 |
 | --- | --- | --- |
-| macOS | [Apple Silicon](https://github.com/KrisLee1/OriaTunnel/releases/download/v0.5.0/OriaTunnel_0.5.0_aarch64.dmg) · [Intel](https://github.com/KrisLee1/OriaTunnel/releases/download/v0.5.0/OriaTunnel_0.5.0_x64.dmg) | 디스크 이미지를 열고 OriaTunnel을 응용 프로그램 폴더로 드래그하세요. |
-| Windows | [x64](https://github.com/KrisLee1/OriaTunnel/releases/download/v0.5.0/OriaTunnel_0.5.0_x64-setup.exe) · [ARM64](https://github.com/KrisLee1/OriaTunnel/releases/download/v0.5.0/OriaTunnel_0.5.0_arm64-setup.exe) | 설치 프로그램을 실행하고 안내를 따르세요. |
+| macOS | [Apple Silicon](https://github.com/KrisLee1/OriaSSH/releases/download/v1.0.0/OriaSSH_1.0.0_aarch64.dmg) · [Intel](https://github.com/KrisLee1/OriaSSH/releases/download/v1.0.0/OriaSSH_1.0.0_x64.dmg) | 디스크 이미지를 열고 OriaSSH을 응용 프로그램 폴더로 드래그하세요. |
+| Windows | [x64](https://github.com/KrisLee1/OriaSSH/releases/download/v1.0.0/OriaSSH_1.0.0_x64-setup.exe) · [ARM64](https://github.com/KrisLee1/OriaSSH/releases/download/v1.0.0/OriaSSH_1.0.0_arm64-setup.exe) | 설치 프로그램을 실행하고 안내를 따르세요. |
 
 ### 버전 기록
 
-**v0.5.0** · 터미널을 끌어다 놓아 분할할 수 있으며, Windows SSH 호스트에서 PowerShell 스마트 편집을 지원합니다. 대용량 폴더 전송, 연결이 끊긴 뒤 전송 재개, 패널 반응 속도도 개선했습니다. 앱 정보에서 업데이트를 확인할 수 있습니다.
+**v1.0.0**에서는 연결 맵에서 호스트, 서비스, 포워딩을 함께 관리합니다. 호스트 카드에서 SSH 계정을 전환하고 서비스 상태와 호스트 로그를 확인할 수 있습니다. 공유할 작업 공간 설정도 개별적으로 선택할 수 있습니다.
 
-[릴리스 노트(중국어 간체)](../releases/v0.5.0.md) · [전체 버전](https://github.com/KrisLee1/OriaSSH/releases)
+[릴리스 노트(중국어 간체)](../releases/v1.0.0.md) · [전체 버전](https://github.com/KrisLee1/OriaSSH/releases)
 
 ## 빠른 시작
 
 SSH 서버의 3000번 포트에서 실행 중인 웹 서비스를 로컬 브라우저로 여는 예시입니다.
 
 1. OriaSSH을 열고 **호스트 추가**를 선택합니다. SSH 설정에서 발견한 호스트를 선택하거나 연결 정보를 직접 입력하세요. 호스트 탐색은 설정만 읽으며 자동으로 연결하지 않습니다.
-2. **새 포워딩**에서 호스트와 로컬 포워딩(L)을 선택하세요. 로컬 수신 주소는 `127.0.0.1:13000`, 대상은 SSH 서버 자체의 `127.0.0.1:3000`으로 설정하세요.
+2. 로컬 컴퓨터 카드의 가장자리에서 캔버스의 빈 곳으로 드래그한 후 호스트와 로컬 포워딩(L)을 선택하세요. 로컬 수신 주소는 `127.0.0.1:13000`, 대상은 SSH 서버의 `127.0.0.1:3000`으로 설정하세요.
 3. **저장 후 시작**을 선택하고 안내에 따라 인증합니다. 처음 연결할 때는 서버 지문을 확인하세요. 규칙에 **수신 대기 중**이 표시되면 로컬 브라우저에서 `http://127.0.0.1:13000`을 여세요.
 
 다음부터는 저장한 규칙을 시작하면 됩니다. 페이지가 열리지 않으면 대상 포트에서 원격 서비스가 실행 중인지 확인하세요. [문제 해결 가이드(중국어 간체)](../USAGE.md#查看状态与排查问题)
@@ -76,24 +76,15 @@ SSH 서버의 3000번 포트에서 실행 중인 웹 서비스를 로컬 브라�
 | **R · 원격 포워딩** | 서버에서 이 컴퓨터의 개발 서비스에 접근 | 서버의 수신 포트에 연결하면 SSH를 통해 로컬 서비스에 접근합니다 |
 | **D · 동적 포워딩** | SSH 호스트를 통해 여러 내부 주소에 접근 | 메뉴에서 독립 프록시 브라우저를 열거나 다른 클라이언트에 로컬 SOCKS5를 설정합니다 |
 
-OriaSSH 설정 파일이 있다면 포워딩 페이지에서 가져온 뒤 내용을 검토하고 자신의 인증 정보를 입력하여 시작하세요. 가져온 서비스 템플릿은 검토 후 실행을 활성화해야 합니다. [기존 설정 사용(중국어 간체)](../USAGE.md#使用现成配置)을 참고하세요.
+OriaSSH 설정 파일이 있다면 설정의 구성 파일 메뉴에서 가져온 뒤 내용을 검토하고 자신의 인증 정보를 입력하여 시작하세요. 가져온 서비스 템플릿은 검토 후 실행을 활성화해야 합니다. [기존 설정 사용(중국어 간체)](../USAGE.md#使用现成配置)을 참고하세요.
 
 ## 화면 미리 보기
 
-밝은 테마와 어두운 테마의 스크린샷은 이름을 변경하기 전 공식 웹사이트의 데모를 예시 데이터로 촬영한 것입니다.
+밝은 테마와 어두운 테마의 스크린샷은 OriaSSH 공식 웹사이트의 대화형 데모에서 예시 데이터로 촬영했습니다.
 
-| <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/connection-map-dark.png"><img src="../assets/screenshots/connection-map-light.png" alt="연결 맵"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/terminal-dark.png"><img src="../assets/screenshots/terminal-light.png" alt="터미널 명령 라이브러리"></picture> |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/connection-map-dark.png"><img src="../assets/screenshots/connection-map-light.png" alt="연결 맵"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/terminal-dark.png"><img src="../assets/screenshots/terminal-light.png" alt="분할 터미널"></picture> |
 | :---: | :---: |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/files-dark.png"><img src="../assets/screenshots/files-light.png" alt="파일 전송 대기열"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/vnc-dark.png"><img src="../assets/screenshots/vnc-light.png" alt="VNC 원격 데스크톱"></picture> |
-
-<details>
-<summary>다른 화면 보기</summary>
-
-| <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/forwards-dark.png"><img src="../assets/screenshots/forwards-light.png" alt="포워딩 규칙"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/services-dark.png"><img src="../assets/screenshots/services-light.png" alt="서비스"></picture> |
-| :---: | :---: |
-| <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/hosts-dark.png"><img src="../assets/screenshots/hosts-light.png" alt="SSH 호스트"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/logs-dark.png"><img src="../assets/screenshots/logs-light.png" alt="활동 로그"></picture> |
-
-</details>
 
 ## 문서 및 지원
 

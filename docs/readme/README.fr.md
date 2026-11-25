@@ -13,7 +13,7 @@
   <a href="../../README.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.en.md">English</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.de.md">Deutsch</a> · Français · <a href="README.ru.md">Русский</a>
 </p>
 
-**[Télécharger et installer](#télécharger-et-installer)** · [Prise en main](#prise-en-main) · [Guide utilisateur complet (chinois simplifié)](../USAGE.md) · [Démo en ligne (chinois)](https://oriamade.com/zh-CN/oria-tunnel#workspace)
+**[Télécharger et installer](#télécharger-et-installer)** · [Prise en main](#prise-en-main) · [Guide utilisateur complet (chinois simplifié)](../USAGE.md) · [Démo en ligne (chinois)](https://oriamade.com/zh-CN/oria-ssh#workspace)
 
 ## Fonctionnalités
 
@@ -45,25 +45,25 @@
 
 ## Télécharger et installer
 
-OriaSSH s’appelait auparavant OriaTunnel. Les paquets de la version 0.5.0 et l’application qu’ils installent portent encore l’ancien nom.
+OriaSSH s’appelait auparavant OriaTunnel. Depuis la v0.5.0, recherchez les mises à jour dans **À propos**.
 
-| Plateforme | Paquet v0.5.0 | Installation |
+| Plateforme | Paquet v1.0.0 | Installation |
 | --- | --- | --- |
-| macOS | [Apple Silicon](https://github.com/KrisLee1/OriaTunnel/releases/download/v0.5.0/OriaTunnel_0.5.0_aarch64.dmg) · [Intel](https://github.com/KrisLee1/OriaTunnel/releases/download/v0.5.0/OriaTunnel_0.5.0_x64.dmg) | Ouvrez l’image disque et glissez OriaTunnel dans Applications. |
-| Windows | [x64](https://github.com/KrisLee1/OriaTunnel/releases/download/v0.5.0/OriaTunnel_0.5.0_x64-setup.exe) · [ARM64](https://github.com/KrisLee1/OriaTunnel/releases/download/v0.5.0/OriaTunnel_0.5.0_arm64-setup.exe) | Exécutez le programme d’installation et suivez les instructions. |
+| macOS | [Apple Silicon](https://github.com/KrisLee1/OriaSSH/releases/download/v1.0.0/OriaSSH_1.0.0_aarch64.dmg) · [Intel](https://github.com/KrisLee1/OriaSSH/releases/download/v1.0.0/OriaSSH_1.0.0_x64.dmg) | Ouvrez l’image disque et glissez OriaSSH dans Applications. |
+| Windows | [x64](https://github.com/KrisLee1/OriaSSH/releases/download/v1.0.0/OriaSSH_1.0.0_x64-setup.exe) · [ARM64](https://github.com/KrisLee1/OriaSSH/releases/download/v1.0.0/OriaSSH_1.0.0_arm64-setup.exe) | Exécutez le programme d’installation et suivez les instructions. |
 
 ### Historique des versions
 
-**v0.5.0** · Divisez le terminal en volets par glisser-déposer et utilisez la saisie assistée de PowerShell sur les hôtes SSH Windows. Le transfert de gros dossiers, la reprise après déconnexion et la réactivité des volets ont été améliorés. Recherchez les mises à jour dans **À propos**.
+**v1.0.0** réunit les hôtes, les services et les redirections sur la carte des connexions. Changez de compte SSH depuis la fiche d’un hôte, consultez l’état des services et les journaux de cet hôte, ou partagez une sélection de paramètres.
 
-[Notes de version (chinois)](../releases/v0.5.0.md) · [Toutes les versions](https://github.com/KrisLee1/OriaSSH/releases)
+[Notes de version (chinois)](../releases/v1.0.0.md) · [Toutes les versions](https://github.com/KrisLee1/OriaSSH/releases)
 
 ## Prise en main
 
 Dans cet exemple, un service web est déjà en cours d’exécution sur le port 3000 du serveur SSH.
 
 1. Ouvrez OriaSSH et choisissez **Ajouter un hôte**. Sélectionnez un hôte détecté dans la configuration SSH ou saisissez ses informations manuellement. La détection lit uniquement la configuration ; elle ne se connecte pas automatiquement.
-2. Choisissez **Nouvelle redirection**, l’hôte et la redirection locale (L). Utilisez `127.0.0.1:13000` pour l’écoute locale et `127.0.0.1:3000` pour la cible sur le serveur SSH.
+2. Faites glisser le pointeur du bord de la fiche de l’ordinateur local vers une zone vide de la carte. Sélectionnez l’hôte et la redirection locale (L). Utilisez `127.0.0.1:13000` pour l’écoute locale et `127.0.0.1:3000` pour la cible sur le serveur SSH.
 3. Choisissez **Enregistrer et démarrer**, authentifiez-vous lorsque l’application le demande et vérifiez l’empreinte du serveur lors de la première connexion. Dès que la règle indique **En écoute**, ouvrez `http://127.0.0.1:13000` dans votre navigateur local.
 
 La prochaine fois, démarrez la règle enregistrée. Si la page ne s’ouvre pas, vérifiez que le service distant fonctionne sur le port cible. [guide de dépannage (chinois)](../USAGE.md#查看状态与排查问题)
@@ -76,24 +76,15 @@ La prochaine fois, démarrez la règle enregistrée. Si la page ne s’ouvre pas
 | **R · Redirection distante** | Permettre à un serveur d’accéder à un service de développement exécuté sur cet ordinateur | Se connecter à un port d’écoute sur le serveur qui mène au service local via SSH |
 | **D · Redirection dynamique** | Atteindre plusieurs adresses internes via un hôte SSH | Ouvrir un navigateur proxy distinct depuis le menu, ou configurer un autre client pour SOCKS5 local |
 
-Vous disposez déjà d’un fichier OriaSSH ? Importez-le depuis la page des redirections, vérifiez son contenu et complétez votre authentification avant de démarrer. Les modèles de service importés nécessitent une vérification et une activation explicites. Voir [utiliser une configuration existante (chinois)](../USAGE.md#使用现成配置).
+Vous disposez déjà d’un fichier OriaSSH ? Importez-le depuis **Paramètres → Fichiers de configuration**, vérifiez son contenu et complétez votre authentification avant de démarrer. Les modèles de service importés nécessitent une vérification et une activation explicites. Voir [utiliser une configuration existante (chinois)](../USAGE.md#使用现成配置).
 
 ## Captures d’écran
 
-Ces captures en mode clair et sombre montrent la démo du site avant le changement de nom, avec des données d’exemple.
+Ces captures en mode clair et sombre proviennent de la démo interactive du site OriaSSH et utilisent des données d’exemple.
 
-| <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/connection-map-dark.png"><img src="../assets/screenshots/connection-map-light.png" alt="Carte des connexions"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/terminal-dark.png"><img src="../assets/screenshots/terminal-light.png" alt="Bibliothèque de commandes du terminal"></picture> |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/connection-map-dark.png"><img src="../assets/screenshots/connection-map-light.png" alt="Carte des connexions"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/terminal-dark.png"><img src="../assets/screenshots/terminal-light.png" alt="Terminal en volets"></picture> |
 | :---: | :---: |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/files-dark.png"><img src="../assets/screenshots/files-light.png" alt="File de transfert de fichiers"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/vnc-dark.png"><img src="../assets/screenshots/vnc-light.png" alt="Bureau distant VNC"></picture> |
-
-<details>
-<summary>Autres captures d’écran</summary>
-
-| <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/forwards-dark.png"><img src="../assets/screenshots/forwards-light.png" alt="Redirections"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/services-dark.png"><img src="../assets/screenshots/services-light.png" alt="Services"></picture> |
-| :---: | :---: |
-| <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/hosts-dark.png"><img src="../assets/screenshots/hosts-light.png" alt="Hôtes SSH"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/logs-dark.png"><img src="../assets/screenshots/logs-light.png" alt="Journal d’activité"></picture> |
-
-</details>
 
 ## Documentation et assistance
 

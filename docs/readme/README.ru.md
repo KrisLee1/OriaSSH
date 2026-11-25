@@ -13,7 +13,7 @@
   <a href="../../README.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.en.md">English</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · <a href="README.de.md">Deutsch</a> · <a href="README.fr.md">Français</a> · Русский
 </p>
 
-**[Скачивание и установка](#скачивание-и-установка)** · [Быстрый старт](#быстрый-старт) · [Полное руководство пользователя (упрощённый китайский)](../USAGE.md) · [Онлайн-демо (на китайском)](https://oriamade.com/zh-CN/oria-tunnel#workspace)
+**[Скачивание и установка](#скачивание-и-установка)** · [Быстрый старт](#быстрый-старт) · [Полное руководство пользователя (упрощённый китайский)](../USAGE.md) · [Онлайн-демо (на китайском)](https://oriamade.com/zh-CN/oria-ssh#workspace)
 
 ## Возможности
 
@@ -45,25 +45,25 @@
 
 ## Скачивание и установка
 
-Прежнее название OriaSSH — OriaTunnel. Установщики версии 0.5.0 и установленное приложение по-прежнему носят прежнее название.
+Прежнее название OriaSSH — OriaTunnel. В версии 0.5.0 проверить обновления можно в разделе «О программе».
 
-| Платформа | Установщик v0.5.0 | Установка |
+| Платформа | Установщик v1.0.0 | Установка |
 | --- | --- | --- |
-| macOS | [Apple Silicon](https://github.com/KrisLee1/OriaTunnel/releases/download/v0.5.0/OriaTunnel_0.5.0_aarch64.dmg) · [Intel](https://github.com/KrisLee1/OriaTunnel/releases/download/v0.5.0/OriaTunnel_0.5.0_x64.dmg) | Откройте образ диска и перетащите OriaTunnel в папку «Программы». |
-| Windows | [x64](https://github.com/KrisLee1/OriaTunnel/releases/download/v0.5.0/OriaTunnel_0.5.0_x64-setup.exe) · [ARM64](https://github.com/KrisLee1/OriaTunnel/releases/download/v0.5.0/OriaTunnel_0.5.0_arm64-setup.exe) | Запустите установщик и следуйте инструкциям. |
+| macOS | [Apple Silicon](https://github.com/KrisLee1/OriaSSH/releases/download/v1.0.0/OriaSSH_1.0.0_aarch64.dmg) · [Intel](https://github.com/KrisLee1/OriaSSH/releases/download/v1.0.0/OriaSSH_1.0.0_x64.dmg) | Откройте образ диска и перетащите OriaSSH в папку «Программы». |
+| Windows | [x64](https://github.com/KrisLee1/OriaSSH/releases/download/v1.0.0/OriaSSH_1.0.0_x64-setup.exe) · [ARM64](https://github.com/KrisLee1/OriaSSH/releases/download/v1.0.0/OriaSSH_1.0.0_arm64-setup.exe) | Запустите установщик и следуйте инструкциям. |
 
 ### История версий
 
-**v0.5.0** · Терминалы можно объединять в панели перетаскиванием, а на SSH-хостах Windows доступно интеллектуальное редактирование команд PowerShell. Улучшены передача больших папок, возобновление после разрыва соединения и отзывчивость панелей. Проверить обновления можно в разделе «О программе».
+В **v1.0.0** хосты, сервисы и перенаправления собраны на карте подключений. Карточка хоста позволяет переключать учётные записи SSH, проверять состояние сервисов и открывать журнал хоста. Для передачи коллегам можно выбрать отдельные настройки рабочего пространства.
 
-[Примечания к выпуску (на китайском)](../releases/v0.5.0.md) · [Все версии](https://github.com/KrisLee1/OriaSSH/releases)
+[Примечания к выпуску (на китайском)](../releases/v1.0.0.md) · [Все версии](https://github.com/KrisLee1/OriaSSH/releases)
 
 ## Быстрый старт
 
 В этом примере веб-сервис уже работает на порту 3000 SSH-сервера. Чтобы открыть его в браузере на своём компьютере, выполните три шага.
 
 1. Откройте OriaSSH и выберите **Добавить хост**. Выберите хост, найденный в конфигурации SSH, или введите его параметры вручную. Поиск только читает конфигурацию и не подключается автоматически.
-2. Выберите **Новое перенаправление**, укажите хост и локальное перенаправление (L). Задайте локальный адрес прослушивания `127.0.0.1:13000` и целевой адрес `127.0.0.1:3000` на самом SSH-сервере.
+2. Перетащите указатель от края карточки локального компьютера на свободное место карты. Выберите хост и локальное перенаправление (L). Задайте локальный адрес `127.0.0.1:13000` и целевой адрес `127.0.0.1:3000` на SSH-сервере.
 3. Выберите **Сохранить и запустить**, пройдите аутентификацию по запросу и проверьте отпечаток сервера при первом подключении. Когда появится состояние **Прослушивание**, откройте `http://127.0.0.1:13000` в локальном браузере.
 
 В следующий раз достаточно запустить сохранённое правило. Если страница не открывается, проверьте, работает ли удалённый сервис на целевом порту. [руководство по диагностике (китайский)](../USAGE.md#查看状态与排查问题)
@@ -76,24 +76,15 @@
 | **R · Удалённое перенаправление** | Доступ с сервера к сервису разработки на этом компьютере | Подключитесь к слушающему порту на сервере, который передаёт запросы локальному сервису по SSH |
 | **D · Динамическое перенаправление** | Доступ через SSH-хост к нескольким адресам внутренней сети | Открыть отдельный прокси-браузер через меню или настроить другой клиент для локального SOCKS5 |
 
-Если файл OriaSSH уже подготовлен, импортируйте его на странице правил, проверьте содержимое и настройте собственную аутентификацию перед запуском. Импортированные шаблоны сервисов нужно отдельно проверить и разрешить. См. [готовая конфигурация (китайский)](../USAGE.md#使用现成配置).
+Если файл OriaSSH уже подготовлен, импортируйте его в разделе файлов конфигурации в настройках, проверьте содержимое и настройте собственную аутентификацию перед запуском. Импортированные шаблоны сервисов нужно отдельно проверить и разрешить. См. [готовая конфигурация (китайский)](../USAGE.md#使用现成配置).
 
 ## Снимки экрана
 
-Снимки в светлой и тёмной темах показывают демоверсию на сайте с примерами данных до переименования.
+На снимках показаны примеры данных в светлой и тёмной темах интерактивной демонстрации на сайте OriaSSH.
 
-| <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/connection-map-dark.png"><img src="../assets/screenshots/connection-map-light.png" alt="Карта подключений"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/terminal-dark.png"><img src="../assets/screenshots/terminal-light.png" alt="Библиотека команд терминала"></picture> |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/connection-map-dark.png"><img src="../assets/screenshots/connection-map-light.png" alt="Карта подключений"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/terminal-dark.png"><img src="../assets/screenshots/terminal-light.png" alt="Разделённый терминал"></picture> |
 | :---: | :---: |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/files-dark.png"><img src="../assets/screenshots/files-light.png" alt="Очередь передачи файлов"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/vnc-dark.png"><img src="../assets/screenshots/vnc-light.png" alt="Удалённый рабочий стол VNC"></picture> |
-
-<details>
-<summary>Другие снимки экрана</summary>
-
-| <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/forwards-dark.png"><img src="../assets/screenshots/forwards-light.png" alt="Правила перенаправления"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/services-dark.png"><img src="../assets/screenshots/services-light.png" alt="Сервисы"></picture> |
-| :---: | :---: |
-| <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/hosts-dark.png"><img src="../assets/screenshots/hosts-light.png" alt="Хосты SSH"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/logs-dark.png"><img src="../assets/screenshots/logs-light.png" alt="Журнал событий"></picture> |
-
-</details>
 
 ## Документация и поддержка
 

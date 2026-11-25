@@ -99,6 +99,11 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: node scripts/release/collect.mjs
+      - name: Check in-place upgrade from the last OriaTunnel release
+        if: needs.prepare.outputs.version == '1.0.0'
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: python scripts/qa/rename-upgrade.py ${{ matrix.arch }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-${{ matrix.platform }}
