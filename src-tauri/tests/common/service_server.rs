@@ -302,21 +302,20 @@ pub async fn start() -> (u16, Fixture, tokio::task::JoinHandle<()>) {
     let home = fixture.home.clone();
     let cancel = fixture.shutdown.clone();
     tokio::spawn(async move {
+        let mut previously_started = false;
         loop {
             let accepted = tokio::select! {_=cancel.cancelled()=>break,r=health.accept()=>r};
             let Ok((mut stream, _)) = accepted else {
                 break;
             };
-            let home = home.clone();
+            // Observe one not-ready response before accepting a retry, even on slow runners.
+            let started = home.path().join("started").is_file();
+            let ready = started && previously_started;
+            previously_started = started;
             tokio::spawn(async move {
                 use tokio::io::AsyncWriteExt;
                 let mut buf = [0; 2048];
                 let _ = stream.read(&mut buf).await;
-                let ready = std::fs::metadata(home.path().join("started"))
-                    .ok()
-                    .and_then(|m| m.modified().ok())
-                    .and_then(|m| m.elapsed().ok())
-                    .is_some_and(|age| age >= Duration::from_millis(1200));
                 let reply = if ready {
                     "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nready"
                 } else {
