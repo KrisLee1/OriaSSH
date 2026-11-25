@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Terminal } from "@xterm/xterm";
 import {
   commandOutput,
+  completionProfile,
   editorReply,
   environmentNames,
   editorRequest,
@@ -86,7 +87,6 @@ export function useShellEditor(
       raw: "release",
       cd: "cwd",
       list: "list",
-      edit: "edited",
     };
     return new Promise<string[]>((resolve, reject) => {
       pending.current.set(revision, {
@@ -136,7 +136,8 @@ export function useShellEditor(
       cancelPending();
       const old = state.current.block;
       const { output, runs } =
-        completedScreen.current ?? captureOutput(term, true, endRow, powershell);
+        completedScreen.current ??
+        captureOutput(term, true, endRow, powershell);
       completedScreen.current = null;
       if (old || output.trim()) {
         const done = old || {
@@ -173,7 +174,8 @@ export function useShellEditor(
         cwd: fields[0],
         home: fields[1],
         powershell,
-        environments: environmentNames(fields.slice(3)),
+        completionProfile: completionProfile(powershell, fields[7], fields[8]),
+        environments: environmentNames(fields.slice(3, powershell ? 6 : 7)),
       };
       state.current = { prompt: next, editing: true, block: null };
       setPrompt(next);

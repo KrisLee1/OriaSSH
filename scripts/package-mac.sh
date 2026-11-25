@@ -33,19 +33,19 @@ fi
 project_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 bundle_root="$project_root/src-tauri/target${build_target:+/$build_target}/release/bundle"
 dmg_dir="$bundle_root/dmg"
-app_path="$bundle_root/macos/OriaTunnel.app"
+app_path="$bundle_root/macos/OriaSSH.app"
 installer_icon="$project_root/src-tauri/icons/installer-icon.icns"
-work_dir=$(mktemp -d "${TMPDIR:-/tmp}/oria-tunnel-package.XXXXXX")
+work_dir=$(mktemp -d "${TMPDIR:-/tmp}/oria-ssh-package.XXXXXX")
 marker="$work_dir/package-start"
 touch "$marker"
 trap 'rm -rf "$work_dir"' EXIT
 
 if $signed; then
-  team_id="${ORIATUNNEL_APPLE_TEAM_ID:-67577AA9ZH}"
-  notary_profile="${ORIATUNNEL_NOTARY_PROFILE:-OriaTunnel-notary}"
-  notary_timeout="${ORIATUNNEL_NOTARY_TIMEOUT:-15m}"
+  team_id="${ORIASSH_APPLE_TEAM_ID:-${ORIATUNNEL_APPLE_TEAM_ID:-67577AA9ZH}}"
+  notary_profile="${ORIASSH_NOTARY_PROFILE:-${ORIATUNNEL_NOTARY_PROFILE:-OriaTunnel-notary}}"
+  notary_timeout="${ORIASSH_NOTARY_TIMEOUT:-${ORIATUNNEL_NOTARY_TIMEOUT:-15m}}"
   if [[ ! "$team_id" =~ ^[A-Z0-9]{10}$ ]]; then
-    echo "ORIATUNNEL_APPLE_TEAM_ID must be a 10-character Apple Team ID." >&2
+    echo "ORIASSH_APPLE_TEAM_ID must be a 10-character Apple Team ID." >&2
     exit 1
   fi
   identities=$(security find-identity -v -p codesigning)
@@ -118,9 +118,9 @@ else
   node "$project_root/node_modules/@tauri-apps/cli/tauri.js" build --bundles app,dmg "$@"
 fi
 
-dmg_path=$(find "$dmg_dir" -maxdepth 1 -type f -name 'OriaTunnel_*.dmg' -newer "$marker" -print | head -n 1)
+dmg_path=$(find "$dmg_dir" -maxdepth 1 -type f -name 'OriaSSH_*.dmg' -newer "$marker" -print | head -n 1)
 if [[ -z "$dmg_path" ]]; then
-  echo "Cannot find the newly generated OriaTunnel DMG" >&2
+  echo "Cannot find the newly generated OriaSSH DMG" >&2
   exit 1
 fi
 
@@ -136,8 +136,8 @@ if $signed; then
     exit 1
   fi
   codesign --verify --deep --strict --verbose=2 "$app_path"
-  ditto -c -k --keepParent "$app_path" "$work_dir/OriaTunnel-notarization.zip"
-  notarize "$work_dir/OriaTunnel-notarization.zip" app
+  ditto -c -k --keepParent "$app_path" "$work_dir/OriaSSH-notarization.zip"
+  notarize "$work_dir/OriaSSH-notarization.zip" app
   bash "$project_root/scripts/release/stapler.sh" staple "$app_path"
   bash "$project_root/scripts/release/stapler.sh" validate "$app_path"
   spctl --assess --type execute --verbose=2 "$app_path"

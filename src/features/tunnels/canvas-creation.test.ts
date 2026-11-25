@@ -1,77 +1,89 @@
 import { describe, expect, it } from "vitest";
-import { Position } from "@xyflow/react";
-import {
-  createdCanvasLayout,
-  oppositeSide,
-  type CanvasCreation,
-} from "./canvas-creation";
+import { availableHostPosition, hostForwardDraft, localForwardServiceIds, serviceLocalForward } from "./canvas-creation";
 import { emptyHost, emptyRule } from "./rule-model";
-import { readPortPlacements } from "./port-placement";
+import { newService } from "../commands/command-model";
 
-describe("creation from the local card edge", () => {
-  const rule = { ...emptyRule("new"), id: "created" };
-  const data = { hosts: [{ ...emptyHost(), id: "new" }], rules: [rule] };
-  const creation = (side: Position): CanvasCreation => ({
-    ruleId: "created",
-    hostId: "new",
-    newHost: true,
-    placement: { side, offset: 0.35 },
+describe("creating forwards on the canvas", () => {
+  const service = {
+    ...newService("host"),
+    id: "api",
+    name: "API",
+    color: "#6b9ee8",
+    icon: { kind: "builtin", value: "server" } as const,
+    directProtocol: "https" as const,
+    port: 13081,
+    ruleIds: ["saved", "shared"],
+  };
+  const rules = [
+    { ...emptyRule("host"), id: "saved", targetHost: "internal.example", targetPort: 9999 },
+    { ...emptyRule("other"), id: "shared", targetHost: "different.example" },
+  ];
+
+  it("prefills a stopped L rule with the service appearance, port and known target on this host", () => {
+    expect(serviceLocalForward("host", service, rules)).toMatchObject({
+      hostId: "host", kind: "L", name: "API", bindAddress: "127.0.0.1",
+      targetPort: 13081, bindPort: 0, targetHost: "internal.example",
+      autoConnect: false, color: service.color, icon: service.icon, serviceProtocol: "https",
+    });
   });
-  it("places measured cards in the trigger direction and retains the exact source offset", () => {
-    for (const side of Object.values(Position)) {
-      const layout = createdCanvasLayout(
-        data,
-        creation(side),
-        { local: { x: 100, y: 200 } },
-        {},
-        {
-          "host:new": { width: 600, height: 300 },
-        },
-      );
-      const host = layout.positions["host:new"];
-      if (side === Position.Top) expect(host.y + 300).toBe(200 - 220);
-      if (side === Position.Bottom) expect(host.y).toBe(200 + 164 + 220);
-      if (side === Position.Left) expect(host.x + 600).toBe(100 - 220);
-      if (side === Position.Right) expect(host.x).toBe(100 + 200 + 220);
-      expect(layout.portPlacements.created).toEqual({ side, offset: 0.35 });
-      expect(
-        readPortPlacements(JSON.stringify(layout.portPlacements)).created,
-      ).toEqual(creation(side).placement);
-      expect(oppositeSide(oppositeSide(side))).toBe(side);
-      expect(oppositeSide(side)).not.toBe(side);
+
+  it("uses the host loopback when no single saved target is available", () => {
+    expect(serviceLocalForward("host", service, [])?.targetHost).toBe("127.0.0.1");
+    expect(serviceLocalForward("host", service, [
+      rules[0], { ...rules[1], hostId: "host" },
+    ])?.targetHost).toBe("127.0.0.1");
+  });
+
+  it("does not create a rule for services without a valid port", () => {
+    for (const port of [undefined, null, 0, -1, 1.5, 65536]) {
+      expect(serviceLocalForward("host", { ...service, port }, rules)).toBeUndefined();
     }
   });
-  it("avoids an occupied slot on the same side without moving existing cards", () => {
-    const current = { local: { x: 0, y: 0 }, "host:old": { x: 420, y: -60 } };
-    const result = createdCanvasLayout(
-      {
-        hosts: data.hosts,
-        rules: [{ ...emptyRule("old"), id: "old-rule" }, rule],
-      },
-      creation(Position.Right),
-      current,
-      {},
-    );
-    expect(result.positions["host:old"]).toEqual(current["host:old"]);
-    expect(result.positions["host:new"].x).toBe(420);
-    expect(
-      Math.abs(result.positions["host:new"].y - current["host:old"].y),
-    ).toBeGreaterThan(224);
+
+  it("prefills a host rule of the requested kind", () => {
+    expect(hostForwardDraft("host", "R")).toMatchObject({
+      hostId: "host", kind: "R", targetPort: 0, bindPort: 0,
+    });
+    expect(hostForwardDraft("host", "D")).toMatchObject({
+      hostId: "host", kind: "D", name: "SOCKS5", targetPort: 0, bindPort: 0,
+    });
   });
-  it("keeps a reused host in place while routing the new connection from its chosen edge", () => {
-    const positions = {
-      local: { x: 0, y: 0 },
-      "host:new": { x: 700, y: -450 },
-    };
-    const placements = { other: { side: Position.Right, offset: 0.8 } };
-    const result = createdCanvasLayout(
-      data,
-      { ...creation(Position.Left), newHost: false },
-      positions,
-      placements,
-    );
-    expect(result.positions).toBe(positions);
-    expect(result.portPlacements.other).toEqual(placements.other);
-    expect(result.portPlacements.created.side).toBe(Position.Left);
+
+  it("groups explicit and uniquely matched local forwards under their service", () => {
+    const host = { ...emptyHost(), id: "host", address: "server.example" };
+    const local = { ...emptyRule(host.id), id: "legacy", targetPort: 13081 };
+    const remote = { ...local, id: "remote", kind: "R" as const };
+    const external = { ...local, id: "external", targetHost: "upstream.example" };
+    expect([...localForwardServiceIds(host, [rules[0], local, remote, external], [service])])
+      .toEqual([["saved", "api"], ["legacy", "api"]]);
+    expect(localForwardServiceIds(host, [local], [service, { ...service, id: "duplicate", ruleIds: [] }]).size)
+      .toBe(0);
+  });
+});
+
+describe("adding a host card", () => {
+  it("uses the chosen free point and avoids overlapping measured hosts and the computer", () => {
+    const size = { width: 380, height: 180 };
+    const occupied = [
+      { x: 0, y: 0, width: 200, height: 164 },
+      { x: 232, y: 0, width: 440, height: 600 },
+    ];
+    expect(availableHostPosition({ x: 710, y: 10 }, size, occupied)).toEqual({
+      x: 710,
+      y: 10,
+    });
+    for (let i = 0; i < 4; i++) {
+      const point = availableHostPosition({ x: 22, y: 12 }, size, occupied);
+      expect(
+        occupied.every(
+          (r) =>
+            point.x >= r.x + r.width + 32 ||
+            point.x + size.width + 32 <= r.x ||
+            point.y >= r.y + r.height + 32 ||
+            point.y + size.height + 32 <= r.y,
+        ),
+      ).toBe(true);
+      occupied.push({ ...point, ...size });
+    }
   });
 });

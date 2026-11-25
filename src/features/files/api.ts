@@ -19,6 +19,9 @@ export type Session = {
   id: string;
   hostId: string;
   hostName: string;
+  loginId?: string;
+  user?: string;
+  routeKey?: string | null;
   phase: string;
   fingerprint: string | null;
   endpoint: string | null;
@@ -37,6 +40,7 @@ export type Task = {
   hostId: string;
   hostName: string;
   sessionId: string;
+  routeKey?: string;
   direction: string;
   transport?: "checking" | "direct" | "relay" | "client" | null;
   directPending?: boolean;
@@ -122,9 +126,11 @@ export const api = {
     hostId: string,
     secrets: Record<string, string> = {},
     rememberHostIds: string[] = [],
+    loginId?: string,
+    expectedRouteKey?: string,
   ) =>
     invoke<string>("file_connect", {
-      request: { hostId, secrets, rememberHostIds },
+      request: { hostId, secrets, rememberHostIds, loginId, expectedRouteKey },
     }),
   disconnect: (id: string) => invoke("file_disconnect", { id }),
   list: (session: string | null, path: string) =>
@@ -172,10 +178,11 @@ export function sorted(
   sort: string,
   descending = false,
 ) {
+  const term = query.toLocaleLowerCase();
   const items = entries.filter(
     (e) =>
       (hidden || (!e.hidden && !e.name.startsWith("."))) &&
-      e.name.toLocaleLowerCase().includes(query.toLocaleLowerCase()),
+      (!term || e.name.toLocaleLowerCase().includes(term)),
   );
   return items.sort((a, b) => {
     const group =

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Task } from "./api";
-import { recoverTransfer } from "./recover-transfer";
+import type { Session, Task } from "./api";
+import { connectedTransferSession, recoverTransfer } from "./recover-transfer";
 
 const endpoint = (hostId: string) => ({
   hostId,
@@ -31,6 +31,21 @@ const task: Task = {
   finished: null,
 };
 describe("transfer recovery", () => {
+  it("uses the original route when the same host has two connected accounts", () => {
+    const session = (id: string, routeKey: string): Session => ({
+      id, hostId: "host", hostName: "Fixture", phase: "connected",
+      routeKey, route: ["host"], fingerprint: null, endpoint: null, error: null,
+    });
+    const other = session("other", "other-account");
+    const original = session("original", "original-account");
+    expect(connectedTransferSession(
+      [other, original], "host", "expired", "original-account",
+    )).toBe(original);
+    expect(connectedTransferSession(
+      [other], "host", "expired", "original-account",
+    )).toBeUndefined();
+    expect(connectedTransferSession([other], "host", "expired")).toBeUndefined();
+  });
   it.each(["session closed", "notConnected", "sender dropped"])(
     "reconnects to the original host after %s",
     async (error) => {

@@ -54,6 +54,7 @@ export type Prompt = {
   home: string;
   environments?: string[];
   powershell?: boolean;
+  completionProfile?: CompletionProfile;
 };
 export type CommandBlock = Prompt & {
   id: number;
@@ -118,79 +119,238 @@ export function retainBlocks(blocks: ArchivedBlock[], block: CommandBlock) {
   return result.reverse();
 }
 
+export type CompletionProfile = {
+  shell: "bash" | "zsh" | "powershell" | "posix";
+  platform: "linux" | "macos" | "windows" | "bsd" | "unknown";
+};
+
+export function completionProfile(
+  powershell = false,
+  shell?: string,
+  os = "",
+): CompletionProfile {
+  if (powershell) return { shell: "powershell", platform: "windows" };
+  const platform = os.startsWith("linux")
+    ? "linux"
+    : os.startsWith("darwin")
+      ? "macos"
+      : /^(?:free|open|net|dragonfly)bsd/u.test(os)
+        ? "bsd"
+        : /^(?:msys|cygwin|mingw|win32)/u.test(os)
+          ? "windows"
+          : "unknown";
+  return {
+    shell: shell === "bash" || shell === "zsh" ? shell : "posix",
+    platform,
+  };
+}
+
 const boundary = /[\s|;&()<>]/u;
+
+function readWord(
+  line: string,
+  start: number,
+  powershell: boolean,
+  stop = line.length,
+) {
+  const escape = powershell ? "`" : "\\";
+  let value = "";
+  let quote = "";
+  let end = start;
+  for (; end < stop; end++) {
+    const char = line[end];
+    const next = end + 1 < stop ? line[end + 1] : "";
+    if (!quote && boundary.test(char)) break;
+    if (!quote && (char === "'" || char === '"')) quote = char;
+    else if (quote && char === quote) {
+      if (powershell && next === quote) {
+        value += char;
+        end++;
+      } else quote = "";
+    } else if (
+      char === escape &&
+      next &&
+      (!quote || (quote === '"' && (powershell || /["$`\\\n]/u.test(next))))
+    ) {
+      if (next !== "\n") value += next;
+      end++;
+    } else value += char;
+  }
+  return { value, end };
+}
+
+const wrappers = new Map<string, ReadonlySet<string>>([
+  [
+    "sudo",
+    new Set([
+      "-u",
+      "--user",
+      "-g",
+      "--group",
+      "-h",
+      "--host",
+      "-p",
+      "--prompt",
+      "-C",
+      "--close-from",
+      "-R",
+      "--chroot",
+      "-D",
+      "--chdir",
+      "-T",
+      "--command-timeout",
+    ]),
+  ],
+  ["doas", new Set(["-u", "-C"])],
+  ["env", new Set(["-u", "--unset", "-C", "--chdir", "-S", "--split-string"])],
+  ["nice", new Set(["-n", "--adjustment"])],
+  ["stdbuf", new Set(["-i", "-o", "-e", "--input", "--output", "--error"])],
+  ...["command", "builtin", "exec", "nohup", "time"].map(
+    (name) => [name, new Set<string>()] as const,
+  ),
+]);
+
+function commandWords(words: string[], prefix: string) {
+  let i = 0;
+  while (i < words.length) {
+    const word = words[i];
+    if (/^[a-z_]\w*=/iu.test(word)) {
+      i++;
+      continue;
+    }
+    const options = wrappers.get(word);
+    if (!options) break;
+    const wrapperStart = i++;
+    while (i < words.length && words[i].startsWith("-") && words[i] !== "-") {
+      const option = words[i++];
+      if (option === "--") break;
+      if (options.has(option)) {
+        if (i === words.length)
+          return { words: words.slice(wrapperStart, i), wrapperValue: true };
+        i++;
+      }
+    }
+    if (i === words.length && prefix.startsWith("-"))
+      return { words: words.slice(wrapperStart, i), wrapperValue: false };
+  }
+  return { words: words.slice(i), wrapperValue: false };
+}
+
 export function completionWord(
   line: string,
   cursor: number,
   powershell = false,
 ) {
-  const escape = powershell ? "`" : "\\";
-  let start = 0,
-    quote = "",
-    escaped = false;
-  const spans: Array<[number, number]> = [];
-  for (let i = 0; i <= line.length; i++) {
-    const c = line[i];
-    if (!c || (!escaped && !quote && boundary.test(c))) {
-      if (i > start) spans.push([start, i]);
-      start = i + 1;
-    } else if (escaped) escaped = false;
-    else if (c === escape && quote !== "'") escaped = true;
-    else if (quote) {
-      if (c === quote) quote = "";
-    } else if (c === '"' || c === "'") quote = c;
-  }
-  const [from, to] = spans.find(([a, b]) => cursor >= a && cursor <= b) || [
-    cursor,
-    cursor,
-  ];
-  const before = line.slice(0, from);
+  let from = cursor;
+  let to = cursor;
   let prefix = "";
-  quote = "";
-  const typed = line.slice(from, cursor);
-  for (let i = 0; i < typed.length; i++) {
-    const c = typed[i],
-      next = typed[i + 1];
-    if (!quote && (c === "'" || c === '"')) quote = c;
-    else if (powershell && quote === "'" && c === "'" && next === "'") {
-      prefix += c;
+  let redirect = false;
+  let comment = false;
+  let words: string[] = [];
+  for (let i = 0; i <= cursor && i < line.length; ) {
+    const char = line[i];
+    const next = line[i + 1];
+    if (char === "#") {
+      const newline = line.indexOf("\n", i);
+      if (newline < 0 || newline >= cursor) {
+        comment = true;
+        break;
+      }
+      i = newline;
+      continue;
+    }
+    if (!boundary.test(char)) {
+      const token = readWord(line, i, powershell);
+      if (token.end >= cursor) {
+        from = i;
+        to = token.end;
+        prefix = readWord(line, i, powershell, cursor).value;
+        break;
+      }
+      if (redirect) redirect = false;
+      else if (
+        !(
+          /[<>]/u.test(line[token.end] ?? "") &&
+          /^(?:\d+|\*)$/u.test(token.value)
+        )
+      )
+        words.push(token.value);
+      i = token.end;
+      continue;
+    }
+    if (i === cursor) break;
+    if (char === ">" || char === "<" || (char === "&" && next === ">")) {
+      redirect = true;
+      i +=
+        next === char || (char === "&" && next === ">") || next === "&" ? 2 : 1;
+    } else {
+      if (/[\n;|&()]/u.test(char)) {
+        redirect = false;
+        words = [];
+        if (
+          (char === "|" && /[|&]/u.test(next ?? "")) ||
+          (char === "&" && next === "&")
+        )
+          i++;
+      }
       i++;
-    } else if (quote && c === quote) quote = "";
-    else if (
-      c === escape &&
-      next &&
-      (!quote || (quote === '"' && (powershell || /["$`\\\n]/u.test(next))))
-    ) {
-      prefix += next;
-      i++;
-    } else prefix += c;
+    }
   }
-  const command = !before.trim() || /[|;&(]\s*$/u.test(before);
-  const directoryCommand = powershell
-    ? /(?:^|[|;&])\s*(?:cd|sl|chdir|set-location)\s+$/iu
-    : /(?:^|[|;&])\s*(?:builtin\s+)?cd\s+$/u;
-  const kind =
-    command && !prefix.includes("/") && !(powershell && prefix.includes("\\"))
+  let wrapperValue = false;
+  if (!powershell) ({ words, wrapperValue } = commandWords(words, prefix));
+  const command = !words.length && !redirect && !wrapperValue;
+  const head = powershell ? words[0]?.toLowerCase() : words[0];
+  const directory =
+    !redirect &&
+    (powershell
+      ? [
+          "cd",
+          "sl",
+          "chdir",
+          "set-location",
+          "pushd",
+          "push-location",
+        ].includes(head ?? "")
+      : head === "cd" || head === "pushd");
+  const kind: "commands" | "dirs" | "files" =
+    command && !pathPrefixLength(prefix, powershell)
       ? "commands"
-      : directoryCommand.test(before)
+      : directory
         ? "dirs"
         : "files";
-  return { from, to, prefix, kind, powershell, command };
+  return {
+    from,
+    to,
+    prefix,
+    kind,
+    powershell,
+    command,
+    words,
+    redirect,
+    comment,
+    wrapperValue,
+  };
+}
+
+export function pathPrefixLength(prefix: string, powershell = false) {
+  return Math.max(
+    prefix.lastIndexOf("/") + 1,
+    powershell ? prefix.lastIndexOf("\\") + 1 : 0,
+    powershell && /^[a-z]:/iu.test(prefix) ? 2 : 0,
+  );
 }
 
 export function insertCandidate(
   line: string,
   word: ReturnType<typeof completionWord>,
   name: string,
+  leader = "",
 ) {
-  const slash =
+  const parent =
     word.kind === "commands"
-      ? -1
-      : Math.max(
-          word.prefix.lastIndexOf("/"),
-          word.powershell ? word.prefix.lastIndexOf("\\") : -1,
-        );
-  const value = word.prefix.slice(0, slash + 1) + name;
+      ? 0
+      : pathPrefixLength(word.prefix, word.powershell);
+  const value = word.prefix.slice(0, parent) + name;
   let escaped: string;
   if (word.powershell) {
     escaped = value;
@@ -204,13 +364,11 @@ export function insertCandidate(
       ? "'" + value.replaceAll("'", "'\\''") + "'"
       : value
           .replace(/[^\p{L}\p{N}\-_.~/:]/gu, (c) => "\\" + c)
-          .replace(
-            /^~/u,
-            slash >= 0 && word.prefix.startsWith("~/") ? "~" : "\\~",
-          );
+          .replace(/^~/u, parent && word.prefix.startsWith("~/") ? "~" : "\\~");
   }
+  const insertion = leader + escaped;
   return {
-    line: line.slice(0, word.from) + escaped + line.slice(word.to),
-    cursor: word.from + escaped.length,
+    line: line.slice(0, word.from) + insertion + line.slice(word.to),
+    cursor: word.from + insertion.length,
   };
 }

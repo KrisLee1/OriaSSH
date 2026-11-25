@@ -7,6 +7,8 @@ use crate::files::{
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Connect {
     host_id: String,
+    login_id: Option<String>,
+    expected_route_key: Option<String>,
     #[serde(default)]
     secrets: BTreeMap<String, String>,
     #[serde(default)]
@@ -60,11 +62,11 @@ pub async fn file_connect(
         .hosts
         .iter()
         .find(|h| h.id == request.host_id)
-        .ok_or("hostMissing")?
-        .clone();
+        .ok_or("hostMissing")?;
     if !host.diagnostics.is_empty() {
         return Err("hostBlocked".into());
     }
+    let host = sessions::default_login(host, request.login_id.as_deref())?;
     if host
         .unsupported_session_options
         .iter()
@@ -74,6 +76,14 @@ pub async fn file_connect(
     }
     let mut route = resolve_jumps(&snapshot.hosts, &host)?;
     route.push(host.clone());
+    let route_key = crate::service_control::identity(&route);
+    if request
+        .expected_route_key
+        .as_ref()
+        .is_some_and(|expected| expected != &route_key)
+    {
+        return Err("routeChanged".into());
+    }
     let id = scope.session_id("files");
     let cancel = if scope.main() {
         CancellationToken::new()
@@ -109,6 +119,9 @@ pub async fn file_connect(
             id: id.clone(),
             host_id: host.id.clone(),
             host_name: host.name.clone(),
+            login_id: host.login_id(),
+            user: host.user.clone(),
+            route_key: Some(route_key.clone()),
             phase: "connecting".into(),
             fingerprint: None,
             endpoint: None,
@@ -121,7 +134,7 @@ pub async fn file_connect(
         .route_keys
         .lock()
         .unwrap()
-        .insert(id.clone(), crate::service_control::identity(&route));
+        .insert(id.clone(), route_key);
     if cancel.is_cancelled() {
         disconnect(&state, &id);
         state.files.sessions.lock().unwrap().remove(&id);
@@ -179,7 +192,7 @@ pub async fn file_connect(
                 current
                     .hosts
                     .iter()
-                    .any(|v| h.id == v.id && h.same_connection(v))
+                    .any(|v| h.id == v.id && v.matches_login(h))
             }) {
                 return Err("routeChanged".into());
             }
@@ -718,6 +731,9 @@ mod tests {
                 id: "fixture".into(),
                 host_id: "target-host".into(),
                 host_name: "fixture".into(),
+                login_id: "primary:target-host".into(),
+                user: "tester".into(),
+                route_key: None,
                 phase: "connected".into(),
                 fingerprint: None,
                 endpoint: None,

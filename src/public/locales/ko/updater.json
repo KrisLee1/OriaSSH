@@ -47,9 +47,9 @@
   },
   "about": {
     "title": "정보",
-    "open": "OriaTunnel 정보",
-    "openWithUpdate": "OriaTunnel 정보, 업데이트 있음",
-    "icon": "OriaTunnel 앱 아이콘",
+    "open": "OriaSSH 정보",
+    "openWithUpdate": "OriaSSH 정보, 업데이트 있음",
+    "icon": "OriaSSH 앱 아이콘",
     "version": "버전 {{version}}",
     "copyright": "© {{year}} KrisLee",
     "website": "공식 웹사이트",

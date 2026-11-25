@@ -46,6 +46,91 @@
       "en": "Phone"
     },
     {
+      "id": "windows",
+      "zh": "Windows",
+      "en": "Windows"
+    },
+    {
+      "id": "macos",
+      "zh": "macOS",
+      "en": "macOS"
+    },
+    {
+      "id": "linux",
+      "zh": "Linux",
+      "en": "Linux"
+    },
+    {
+      "id": "ubuntu",
+      "zh": "Ubuntu",
+      "en": "Ubuntu"
+    },
+    {
+      "id": "arch-linux",
+      "zh": "Arch Linux",
+      "en": "Arch Linux"
+    },
+    {
+      "id": "freebsd",
+      "zh": "FreeBSD",
+      "en": "FreeBSD"
+    },
+    {
+      "id": "raspberry-pi",
+      "zh": "树莓派",
+      "en": "Raspberry Pi"
+    },
+    {
+      "id": "tablet",
+      "zh": "平板电脑",
+      "en": "Tablet"
+    },
+    {
+      "id": "pc-case",
+      "zh": "台式主机",
+      "en": "Desktop tower"
+    },
+    {
+      "id": "printer",
+      "zh": "打印机",
+      "en": "Printer"
+    },
+    {
+      "id": "usb",
+      "zh": "USB 设备",
+      "en": "USB device"
+    },
+    {
+      "id": "cctv",
+      "zh": "监控摄像头",
+      "en": "Security camera"
+    },
+    {
+      "id": "projector",
+      "zh": "投影仪",
+      "en": "Projector"
+    },
+    {
+      "id": "dish",
+      "zh": "卫星天线",
+      "en": "Satellite dish"
+    },
+    {
+      "id": "watch",
+      "zh": "智能手表",
+      "en": "Smartwatch"
+    },
+    {
+      "id": "television",
+      "zh": "电视",
+      "en": "Television"
+    },
+    {
+      "id": "keyboard",
+      "zh": "键盘",
+      "en": "Keyboard"
+    },
+    {
       "id": "network",
       "zh": "网络",
       "en": "Network"

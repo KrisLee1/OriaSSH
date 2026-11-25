@@ -5,6 +5,7 @@ import type {
   ServiceTemplate,
 } from "@/types";
 import { renderInvocation } from "./command-invocation";
+import { hasServicePort, servicePortToken } from "./command-variable-model";
 
 interface DirectAction {
   kind: CommandKind;
@@ -15,6 +16,7 @@ interface DirectAction {
 }
 export interface DirectRecipe {
   source?: string;
+  port?: number;
   actions: DirectAction[];
 }
 const command = (executable: string, ...args: string[]): CommandInvocation => {
@@ -86,12 +88,14 @@ export const directServiceRecipes: Record<string, DirectRecipe> = {
     ],
   },
   jupyter: {
+    port: 8888,
     actions: [
-      action("stop", "jupyter", "server", "stop", "8888"),
+      action("stop", "jupyter", "server", "stop", servicePortToken),
       action("status", "jupyter", "server", "list"),
     ],
   },
   vnc: {
+    port: 5901,
     source:
       "https://manpages.debian.org/unstable/tigervnc-standalone-server/tigervncserver.1.en.html",
     actions: [
@@ -106,7 +110,7 @@ export const directServiceRecipes: Record<string, DirectRecipe> = {
   },
   // Existing model/application recipes supply their own direct launch below.
   gitea: { actions: [] },
-  dsh: { actions: [foreground("dsh", "web", "--port", "3080")] },
+  dsh: { port: 3080, actions: [foreground("dsh", "web", "--port", servicePortToken)] },
   ollama: { actions: [action("status", "ollama", "list")] },
   llamacpp: { actions: [] },
   vllm: { actions: [] },
@@ -207,8 +211,9 @@ export const directServiceRecipes: Record<string, DirectRecipe> = {
     ],
   },
   memcached: {
+    port: 11211,
     actions: [
-      foreground("memcached", "-l", "127.0.0.1", "-m", "64", "-p", "11211"),
+      foreground("memcached", "-l", "127.0.0.1", "-m", "64", "-p", servicePortToken),
     ],
   },
   rabbitmq: {
@@ -228,13 +233,14 @@ export const directServiceRecipes: Record<string, DirectRecipe> = {
     ],
   },
   prometheus: {
+    port: 9090,
     actions: [
       foreground(
         "prometheus",
         "--config.file",
         "/path/to/prometheus.yml",
         "--web.listen-address",
-        "127.0.0.1:9090",
+        `127.0.0.1:${servicePortToken}`,
       ),
     ],
   },
@@ -244,6 +250,7 @@ export const directServiceRecipes: Record<string, DirectRecipe> = {
     ],
   },
   minio: {
+    port: 9000,
     source: "https://github.com/minio/minio/blob/master/docs/config/README.md",
     actions: [
       foreground(
@@ -251,7 +258,7 @@ export const directServiceRecipes: Record<string, DirectRecipe> = {
         "server",
         "/path/to/data",
         "--address",
-        "127.0.0.1:9000",
+        `127.0.0.1:${servicePortToken}`,
         "--console-address",
         "127.0.0.1:9001",
       ),
@@ -267,6 +274,7 @@ export function directServiceTemplate(preset: {
   icon: string;
   resource: string;
   launch?: CommandInvocation;
+  port?: number;
 }): ServiceTemplate {
   const recipe = directServiceRecipes[preset.id];
   if (!recipe) throw new Error("templateUnsupported");
@@ -290,6 +298,10 @@ export function directServiceTemplate(preset: {
     id: crypto.randomUUID(),
     kind: definition.kind,
     label: definition.label || definition.kind,
+    servicePortVariable: (
+      hasServicePort(definition.invocation?.script ?? definition.script) ||
+      definition.invocation?.arguments.some((arg) => hasServicePort(arg.value))
+    ) || undefined,
     invocation: definition.invocation
       ? structuredClone(definition.invocation)
       : undefined,
@@ -309,21 +321,23 @@ export function directServiceTemplate(preset: {
       definition.label === "reload",
   }));
   const start = actions.find((a) => a.kind === "start")!;
+  const inventory = preset.id === "vnc" ? actions.find((a) => a.kind === "status") : undefined;
   return {
     name: preset.name,
     category: preset.category,
     color: preset.color,
     icon: { kind: "builtin", value: preset.icon },
     resource: preset.resource,
+    port: preset.port ?? recipe.port,
     shell: "POSIX sh",
     actions,
     control: {
-      // CLI success (e.g. docker inspect or vncserver -list) does not prove this
-      // instance is running. Do not inherit systemd exit-code mappings/probes.
-      statusProbe: null,
+      statusProbe: inventory ? {
+        actionId: inventory.id, mode: "vncSessions", runningCodes: [], stoppedCodes: [], failedCodes: [],
+      } : null,
       healthProbe: null,
       startActionId: start.mode === "command" ? start.id : null,
-      checkAfterActions: false,
+      checkAfterActions: !!inventory,
       ttlSecs: 60,
     },
   };

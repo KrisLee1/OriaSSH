@@ -1,15 +1,5 @@
 .files-workspace {
   container-type: inline-size;
-  --aide-floating-surface-background: color-mix(
-    in srgb,
-    var(--oria-color-bg)
-      calc(
-        var(--oria-opacity-overlay) * var(--aide-component-overlay-opacity) *
-          100%
-      ),
-    transparent
-  );
-  border-color: var(--oria-color-border);
 }
 .files-workspace > .workspace-panel-header {
   min-height: 32px;
@@ -61,8 +51,8 @@
   min-height: 28px;
 }
 .file-transfer-port {
-  width: 4px;
-  height: 4px;
+  width: var(--canvas-port-size);
+  height: var(--canvas-port-size);
   opacity: 0;
   pointer-events: none;
 }
@@ -90,8 +80,19 @@
   top: 8px;
   right: 8px;
 }
-.file-transfer-edge .react-flow__edge-path {
+.file-transfer-edge .wire-track {
   stroke-dasharray: 6 7;
+}
+.file-packet-sheet {
+  fill: color-mix(in oklab, currentColor 63%, var(--oria-color-bg));
+  fill-opacity: .92;
+  stroke: color-mix(in oklab, currentColor 54%, white);
+  stroke-width: 1;
+}
+.file-packet-fold {
+  fill: color-mix(in oklab, currentColor 46%, white);
+  stroke: color-mix(in oklab, currentColor 33%, white);
+  stroke-width: .65;
 }
 .files-edge-tooltip {
   display: block;
@@ -124,19 +125,6 @@
 }
 .files-edge-detail > [data-slot="progress"] {
   height: 4px;
-}
-.file-transfer-moving .react-flow__edge-path {
-  animation: file-transfer-dash 1s linear infinite;
-}
-@keyframes file-transfer-dash {
-  to {
-    stroke-dashoffset: -26;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .file-transfer-moving .react-flow__edge-path {
-    animation: none;
-  }
 }
 .files-pane-heading {
   display: flex;
@@ -179,9 +167,6 @@
   min-width: 0;
   height: 28px;
   font-size: 12px;
-}
-.files-search-popup {
-  width: min(280px, calc(100vw - 24px));
 }
 .files-toolbar svg {
   flex-shrink: 0;

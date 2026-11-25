@@ -31,6 +31,11 @@
   min-height: 0;
   flex: none;
 }
+.shell-terminal-grid {
+  /* FitAddon measures its host, so the surrounding screen padding stays outside the grid. */
+  width: 100%;
+  height: 100%;
+}
 .shell-screen-hidden {
   visibility: hidden;
   position: absolute;

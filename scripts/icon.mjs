@@ -8,7 +8,7 @@ import { execFileSync } from 'node:child_process';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const icons = path.join(root, 'src-tauri/icons');
 const cli = path.join(root, 'node_modules/@tauri-apps/cli/tauri.js');
-const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'oria-tunnel-icons-'));
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'oria-ssh-icons-'));
 const desktopFiles = ['32x32.png', '64x64.png', '128x128.png', '128x128@2x.png',
   'icon.png', 'icon.ico', 'icon.icns', 'StoreLogo.png', 'Square30x30Logo.png',
   'Square44x44Logo.png', 'Square71x71Logo.png', 'Square89x89Logo.png',
@@ -20,12 +20,12 @@ function render(input, output, extra = []) {
 }
 try {
   const installer = path.join(temp, 'installer');
-  render(path.join(icons, 'OriaTunnelInstaller.svg'), installer);
+  render(path.join(icons, 'OriaSSHInstaller.svg'), installer);
   for (const extension of ['png', 'ico', 'icns']) {
     fs.copyFileSync(path.join(installer, `icon.${extension}`), path.join(icons, `installer-icon.${extension}`));
   }
   for (const [variant, appearance] of [['light', 'Default'], ['dark', 'Dark'], ['mono', 'ClearDark']]) {
-    const master = path.join(icons, `OriaTunnelIconExports/OriaTunnelIcon-iOS-${appearance}-1024@1x.png`);
+    const master = path.join(icons, `OriaSSHIconExports/OriaSSHIcon-iOS-${appearance}-1024@1x.png`);
     const output = path.join(temp, variant);
     render(master, output);
     if (variant === 'light') {

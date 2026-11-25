@@ -11,7 +11,7 @@ describe("connections grouped by SSH profile", () => {
     const host = { ...emptyHost(), id: "unbound" };
     const groups = canvasHostGroups([], [host]);
     expect(groups).toEqual([{ id: "host:unbound", host, rules: [] }]);
-    expect(groupPositions(groups, {})["host:unbound"].x).toBe(480);
+    expect(groupPositions(groups, {})["host:unbound"].x).toBe(340);
   });
   const hosts = ["a", "b"].map((id) => ({
     ...emptyHost(),

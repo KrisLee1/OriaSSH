@@ -38,93 +38,6 @@ pub struct ServiceLink {
     pub selected: bool,
 }
 // Mutate only the caller's cloned config; persistence of the forward and links is atomic.
-#[tauri::command]
-pub async fn set_host_services(
-    state: tauri::State<'_, Arc<AppState>>,
-    app: tauri::AppHandle,
-    window: tauri::WebviewWindow,
-    host_id: String,
-    links: Vec<ServiceLink>,
-) -> Result<Snapshot, String> {
-    local(&window)?;
-    let _launch = state.workers.lock().await;
-    state.allow_launch()?;
-    assign_host_services(&state, &host_id, &links)?;
-    state.publish(&app);
-    Ok(state.snapshot())
-}
-
-fn assign_host_services(
-    state: &AppState,
-    host_id: &str,
-    links: &[ServiceLink],
-) -> Result<(), String> {
-    if links.len() > 256 {
-        return Err("invalidService".into());
-    }
-    let snapshot = state.snapshot();
-    if !snapshot.added_host_ids.iter().any(|id| id == host_id) {
-        return Err("hostMissing".into());
-    }
-    let mut config = state.config.lock().unwrap();
-    let mut next = config.clone();
-    let mut ids = BTreeSet::new();
-    for link in links {
-        if !ids.insert(&link.id) {
-            return Err("invalidService".into());
-        }
-        let service = next
-            .services
-            .iter()
-            .find(|s| s.id == link.id)
-            .ok_or("serviceMissing")?;
-        if service.revision != link.revision {
-            return Err("staleAction".into());
-        }
-    }
-    if next
-        .services
-        .iter()
-        .any(|s| s.host_ids.iter().any(|id| id == host_id) && !ids.contains(&s.id))
-    {
-        return Err("staleAction".into());
-    }
-    for link in links {
-        let service = next.services.iter_mut().find(|s| s.id == link.id).unwrap();
-        if service.host_ids.iter().any(|id| id == host_id) == link.selected {
-            continue;
-        }
-        if state.terminals.busy(&service.id)
-            || state
-                .commands
-                .list()
-                .iter()
-                .any(|r| r.service_id == service.id && r.active())
-        {
-            return Err("serviceBusy".into());
-        }
-        service.host_ids.retain(|id| id != host_id);
-        if link.selected {
-            service.host_ids.push(host_id.into());
-        } else {
-            service.rule_ids.retain(|id| {
-                !snapshot
-                    .rules
-                    .iter()
-                    .any(|r| &r.id == id && r.host_id == host_id)
-            });
-        }
-        service.revision = uuid::Uuid::new_v4().to_string();
-    }
-    if let Some(host) = snapshot.hosts.iter().find(|host| host.id == host_id) {
-        next.host_snapshots.insert(host_id.into(), host.clone());
-    }
-    state.persist(&next)?;
-    *config = next;
-    drop(config);
-    Ok(())
-}
-
 pub(super) fn bind_rule_services(
     config: &mut crate::model::Config,
     rule_id: &str,
@@ -199,25 +112,22 @@ fn save_profile(state: &AppState, mut service: Service) -> Result<Snapshot, Stri
         return Err("serviceBusy".into());
     }
     let snapshot = state.snapshot();
-    service.rule_ids = if service.id.is_empty() {
-        Vec::new()
+    if service.id.is_empty() {
+        if service.host_ids.len() != 1 {
+            return Err("serviceTargetRequired".into());
+        }
+        service.rule_ids.clear();
     } else {
-        snapshot
+        let existing = snapshot
             .services
             .iter()
             .find(|s| s.id == service.id)
-            .ok_or("serviceMissing")?
-            .rule_ids
-            .iter()
-            .filter(|id| {
-                snapshot
-                    .rules
-                    .iter()
-                    .any(|r| &r.id == *id && service.host_ids.contains(&r.host_id))
-            })
-            .cloned()
-            .collect()
-    };
+            .ok_or("serviceMissing")?;
+        if existing.host_ids != service.host_ids {
+            return Err("serviceUnbound".into());
+        }
+        service.rule_ids.clone_from(&existing.rule_ids);
+    }
     if service
         .host_ids
         .iter()
@@ -225,13 +135,9 @@ fn save_profile(state: &AppState, mut service: Service) -> Result<Snapshot, Stri
     {
         return Err("hostMissing".into());
     }
-    if service
-        .rule_ids
-        .iter()
-        .any(|id| !snapshot.rules.iter().any(|r| &r.id == id))
-    {
-        return Err("ruleMissing".into());
-    }
+    service
+        .login_by_host
+        .retain(|id, _| service.host_ids.contains(id));
     if state
         .commands
         .list()
@@ -242,6 +148,14 @@ fn save_profile(state: &AppState, mut service: Service) -> Result<Snapshot, Stri
     }
     let mut config = state.config.lock().unwrap();
     let mut next = config.clone();
+    for (host_id, login) in &service.login_by_host {
+        let host = snapshot
+            .hosts
+            .iter()
+            .find(|h| &h.id == host_id)
+            .ok_or("hostMissing")?;
+        super::current_host_credentials(&next, host)?.login(Some(login))?;
+    }
     if service.id.is_empty() {
         if next.services.len() >= 256 {
             return Err("commandLimit".into());
@@ -263,6 +177,10 @@ fn save_profile(state: &AppState, mut service: Service) -> Result<Snapshot, Stri
         .find(|s| s.id == service.id)
         .map(|s| s.execution_enabled)
         .unwrap_or(service.execution_enabled);
+    // Service ownership comes from host IDs. Drop obsolete forward links in the save transaction.
+    service
+        .rule_ids
+        .retain(|id| next.rules.iter().any(|rule| &rule.id == id));
     service.revision = uuid::Uuid::new_v4().to_string();
     for rule in &mut next.rules {
         if service.rule_ids.contains(&rule.id) && rule.kind != ForwardKind::D {
@@ -292,7 +210,8 @@ fn save_profile(state: &AppState, mut service: Service) -> Result<Snapshot, Stri
         .filter(|r| next.services.last().unwrap().rule_ids.contains(&r.id))
     {
         if let Some(host) = snapshot.hosts.iter().find(|h| h.id == rule.host_id) {
-            next.host_snapshots.insert(host.id.clone(), host.clone());
+            next.host_snapshots
+                .insert(host.id.clone(), super::host_checkpoint(host.clone()));
         }
     }
     for host in snapshot
@@ -300,7 +219,8 @@ fn save_profile(state: &AppState, mut service: Service) -> Result<Snapshot, Stri
         .iter()
         .filter(|h| next.services.last().unwrap().host_ids.contains(&h.id))
     {
-        next.host_snapshots.insert(host.id.clone(), host.clone());
+        next.host_snapshots
+            .insert(host.id.clone(), super::host_checkpoint(host.clone()));
     }
     state.persist(&next)?;
     *config = next;
@@ -455,6 +375,7 @@ pub fn command_runs(
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Start {
+    login_id: Option<String>,
     service_id: String,
     action_id: String,
     #[serde(default)]
@@ -488,6 +409,7 @@ async fn launch_command(
         state,
         app,
         service_api::Start {
+            login_id: request.login_id,
             service_id: request.service_id,
             action_id: Some(request.action_id),
             revision: request.revision,
@@ -540,6 +462,32 @@ pub fn cancel_command(
 ) -> Result<(), String> {
     local(&window)?;
     state.commands.cancel(&id)
+}
+
+#[tauri::command]
+pub fn preview_service_commands(
+    state: tauri::State<Arc<AppState>>,
+    window: tauri::WebviewWindow,
+    id: String,
+    revision: String,
+) -> Result<BTreeMap<String, String>, String> {
+    local(&window)?;
+    let config = state.config.lock().unwrap();
+    let service = config
+        .services
+        .iter()
+        .find(|s| s.id == id)
+        .ok_or("serviceMissing")?;
+    if service.revision != revision {
+        return Err("staleAction".into());
+    }
+    let mut service = service.clone();
+    service.prepare_managed_actions();
+    service
+        .actions
+        .iter()
+        .map(|action| Ok((action.id.clone(), action.resolved(service.port)?.command)))
+        .collect()
 }
 
 #[tauri::command]
@@ -657,6 +605,7 @@ mod tests {
     }
     fn service(host: &str) -> Service {
         Service {
+            login_by_host: Default::default(),
             direct_protocol: None,
             host_ids: if host.is_empty() {
                 vec![]
@@ -676,6 +625,8 @@ mod tests {
             revision: "".into(),
             no_local_environment: true,
             actions: vec![commands::Action {
+                systemd_launch: None,
+                service_port_variable: false,
                 invocation: None,
                 mode: Default::default(),
                 id: "start".into(),
@@ -693,8 +644,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.json");
         let state = AppState::isolated(path.clone());
-        save_profile(&state, service("")).unwrap();
-        save_profile(&state, service("")).unwrap();
+        state.config.lock().unwrap().hosts.push(Host {
+            id: "h".into(),
+            name: "fixture".into(),
+            ..Default::default()
+        });
+        save_profile(&state, service("h")).unwrap();
+        save_profile(&state, service("h")).unwrap();
         let snapshot = state.snapshot();
         let mut targets: Vec<_> = snapshot
             .services
@@ -745,7 +701,7 @@ mod tests {
             port: 22,
             ..Default::default()
         };
-        state.upsert_host(host).unwrap();
+        state.upsert_host(host, None).unwrap();
         let saved = save_profile(&state, service("h")).unwrap().services[0].clone();
         let rule = crate::model::Rule {
             id: "r".into(),
@@ -841,47 +797,98 @@ mod tests {
         assert_eq!(serde_json::to_vec(&config).unwrap(), before);
     }
     #[test]
-    fn host_binding_is_revision_checked_and_does_not_create_a_forward_or_worker() {
+    fn service_creation_requires_one_owner_and_editing_cannot_reassign_it() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("connections.json");
-        let state = AppState::isolated(path.clone());
-        state
-            .upsert_host(Host {
-                name: "isolated".into(),
-                address: "127.0.0.1".into(),
-                user: "tester".into(),
-                port: 22,
+        let state = AppState::isolated(dir.path().join("config.json"));
+        for id in ["one", "two"] {
+            state.config.lock().unwrap().hosts.push(Host {
+                id: id.into(),
+                name: id.into(),
                 ..Default::default()
-            })
-            .unwrap();
-        let host = state.snapshot().hosts[0].id.clone();
-        let saved = save_profile(&state, service("")).unwrap().services[0].clone();
-        let links = [ServiceLink {
-            id: saved.id.clone(),
-            revision: saved.revision.clone(),
-            selected: true,
-        }];
-        assign_host_services(&state, &host, &links).unwrap();
-        let snapshot = state.snapshot();
-        assert_eq!(snapshot.services[0].host_ids, vec![host.clone()]);
-        assert!(snapshot.rules.is_empty());
-        assert!(snapshot.runtimes.is_empty());
-        assert!(state.workers.try_lock().unwrap().is_empty());
-        let before = std::fs::read(&path).unwrap();
-        assert!(assign_host_services(&state, &host, &links).is_err());
-        assert!(assign_host_services(&state, &host, &[]).is_err());
-        assert_eq!(std::fs::read(&path).unwrap(), before);
-        assign_host_services(
-            &state,
-            &host,
-            &[ServiceLink {
-                id: saved.id,
-                revision: snapshot.services[0].revision.clone(),
-                selected: false,
+            });
+        }
+        assert!(save_profile(&state, service("")).is_err());
+        let mut draft = service("one");
+        draft.host_ids.push("two".into());
+        assert!(save_profile(&state, draft).is_err());
+        let mut saved = save_profile(&state, service("one")).unwrap().services[0].clone();
+        saved.host_ids = vec!["two".into()];
+        assert!(save_profile(&state, saved).is_err());
+        assert_eq!(state.snapshot().services[0].host_ids, ["one"]);
+        assert!(state.snapshot().runtimes.is_empty());
+    }
+    #[test]
+    fn service_execution_follows_host_credential_until_explicitly_overridden() {
+        let alternate = uuid::Uuid::new_v4().to_string();
+        let mut host = Host {
+            id: "fixture".into(),
+            user: "original".into(),
+            logins: vec![crate::model::LoginIdentity {
+                id: alternate.clone(),
+                label: String::new(),
+                user: "deploy account".into(),
+                auth_method: crate::model::AuthMethod::Password,
+                identity_files: vec![],
             }],
-        )
-        .unwrap();
-        assert!(state.snapshot().services[0].host_ids.is_empty());
+            ..Default::default()
+        };
+        let mut profile = service(&host.id);
+        let primary = host.login_id();
+        assert_eq!(
+            profile.execution_login(&host, None).unwrap().user,
+            "original"
+        );
+        host.default_login_id = Some(alternate.clone());
+        assert_eq!(
+            profile.execution_login(&host, None).unwrap().user,
+            "deploy account"
+        );
+
+        profile.login_by_host.insert(host.id.clone(), primary);
+        assert_eq!(
+            profile.execution_login(&host, None).unwrap().user,
+            "original"
+        );
+        assert_eq!(
+            profile
+                .execution_login(&host, Some(&alternate))
+                .unwrap()
+                .user,
+            "deploy account"
+        );
+    }
+    #[test]
+    fn service_save_prunes_a_missing_legacy_forward_without_requiring_a_forward() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let state = AppState::isolated(path.clone());
+        state.config.lock().unwrap().hosts.push(Host {
+            id: "h".into(),
+            name: "fixture".into(),
+            ..Default::default()
+        });
+        let mut draft = service("h");
+        draft.rule_ids.push("supplied-by-draft".into());
+        let initial = save_profile(&state, draft).unwrap();
+        assert!(initial.services[0].rule_ids.is_empty());
+
+        state.config.lock().unwrap().services[0]
+            .rule_ids
+            .push("deleted-forward".into());
+        let mut edited = state.snapshot().services[0].clone();
+        edited.name = "updated".into();
+        let saved = save_profile(&state, edited).unwrap();
+        assert_eq!(saved.services[0].name, "updated");
+        assert!(saved.services[0].rule_ids.is_empty());
+        assert!(saved.rules.is_empty());
+        let (forward, host) = saved.services[0]
+            .execution_target(&saved, None, Some("h"))
+            .unwrap();
+        assert!(forward.is_none());
+        assert_eq!(host.id, "h");
+        assert!(AppState::isolated(path).snapshot().services[0]
+            .rule_ids
+            .is_empty());
     }
     #[test]
     fn service_transactions_backup_reload_stale_and_failed_save_never_launch() {
@@ -889,17 +896,26 @@ mod tests {
         let path = dir.path().join("connections.json");
         let state = AppState::isolated(path.clone());
         state
-            .upsert_host(Host {
-                id: "".into(),
-                name: "isolated".into(),
-                address: "127.0.0.1".into(),
-                port: 22,
-                user: "tester".into(),
-                ..Default::default()
-            })
+            .upsert_host(
+                Host {
+                    id: "".into(),
+                    name: "isolated".into(),
+                    address: "127.0.0.1".into(),
+                    port: 22,
+                    user: "tester".into(),
+                    ..Default::default()
+                },
+                None,
+            )
             .unwrap();
         let host = state.snapshot().hosts[0].id.clone();
         let old = std::fs::read(&path).unwrap();
+        let backup = path.with_extension("pre-commands.json");
+        std::fs::create_dir(&backup).unwrap();
+        assert!(save_profile(&state, service(&host)).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), old);
+        assert!(state.snapshot().services.is_empty());
+        std::fs::remove_dir(backup).unwrap();
         let snapshot = save_profile(&state, service(&host)).unwrap();
         let saved = snapshot.services[0].clone();
         let mut portable = snapshot.clone();
@@ -938,10 +954,9 @@ mod tests {
         assert_eq!(state.snapshot().services.len(), 1);
         assert_eq!(std::fs::read(&path).unwrap(), file);
         std::fs::remove_dir(path.with_extension("tmp")).unwrap();
-        assert!(state.remove_host(&host, &[]).is_ok());
-        assert_eq!(state.snapshot().services.len(), 1);
         delete_profile(&state, &current.id, &current.revision).unwrap();
         assert!(state.snapshot().services.is_empty());
+        assert!(state.remove_host(&host, &[], &[]).is_ok());
     }
     #[tokio::test]
     async fn cleanup_cancels_command_jobs_and_update_counts_finishing_transports() {
@@ -980,7 +995,12 @@ mod tests {
     {
         let dir = tempfile::tempdir().unwrap();
         let state = AppState::isolated(dir.path().join("config.json"));
-        let mut draft = service("");
+        state.config.lock().unwrap().hosts.push(Host {
+            id: "h".into(),
+            name: "fixture".into(),
+            ..Default::default()
+        });
+        let mut draft = service("h");
         draft.execution_enabled = false;
         let original = save_profile(&state, draft).unwrap().services[0].clone();
         let mut copy = original.clone();
@@ -1007,13 +1027,16 @@ mod tests {
         let path = dir.path().join("connections.json");
         let state = AppState::isolated(path.clone());
         state
-            .upsert_host(Host {
-                name: "isolated".into(),
-                port: 22,
-                address: "127.0.0.1".into(),
-                user: "tester".into(),
-                ..Default::default()
-            })
+            .upsert_host(
+                Host {
+                    name: "isolated".into(),
+                    port: 22,
+                    address: "127.0.0.1".into(),
+                    user: "tester".into(),
+                    ..Default::default()
+                },
+                None,
+            )
             .unwrap();
         let h = state.snapshot().hosts[0].id.clone();
         let saved = save_profile(&state, service(&h)).unwrap().services[0].clone();
@@ -1069,13 +1092,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let state = AppState::isolated(dir.path().join("connections.json"));
         state
-            .upsert_host(Host {
-                name: "loopback".into(),
-                port: 22,
-                address: "127.0.0.1".into(),
-                user: "tester".into(),
-                ..Default::default()
-            })
+            .upsert_host(
+                Host {
+                    name: "loopback".into(),
+                    port: 22,
+                    address: "127.0.0.1".into(),
+                    user: "tester".into(),
+                    ..Default::default()
+                },
+                None,
+            )
             .unwrap();
         let h = state.snapshot().hosts[0].id.clone();
         let saved = save_profile(&state, service(&h)).unwrap().services[0].clone();

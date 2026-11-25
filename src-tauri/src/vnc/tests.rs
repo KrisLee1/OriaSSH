@@ -3,6 +3,14 @@ use flate2::{write::ZlibEncoder, Compression, Decompress};
 use std::io::Write;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+fn displayed_user(
+    context: &SshContext,
+    endpoint: &Endpoint,
+    snapshot: &Snapshot,
+) -> Option<String> {
+    context.service_user(endpoint, snapshot, &Default::default())
+}
+
 #[cfg(windows)]
 #[test]
 fn empty_protocol_marker_is_not_an_executable_handler() {
@@ -91,6 +99,214 @@ fn external_links_resolve_a_unique_ssh_host_and_credentials_follow_the_forward_t
     assert_ne!(direct, forward);
     snapshot.rules[0].target_host = "desktop-b".into();
     assert_ne!(forward, endpoint.credential_binding(&snapshot));
+}
+
+#[test]
+fn a_forward_without_a_vnc_service_does_not_supply_a_desktop_username() {
+    use crate::model::{Host, Rule, Runtime, ServiceProtocol, Snapshot};
+    let endpoint = Endpoint::parse("vnc://127.0.0.1:15901").unwrap();
+    let host = Host {
+        id: "host".into(),
+        address: "127.0.0.1".into(),
+        user: "configured default".into(),
+        ..Default::default()
+    };
+    let rule = Rule {
+        id: "forward".into(),
+        host_id: host.id.clone(),
+        bind_port: 15901,
+        target_port: 5900,
+        ..Default::default()
+    };
+    let mut snapshot = Snapshot {
+        hosts: vec![host.clone()],
+        added_host_ids: vec![host.id.clone()],
+        rules: vec![rule.clone()],
+        runtimes: vec![Runtime {
+            rule_id: rule.id.clone(),
+            status: "listening".into(),
+            host_snapshot: Some(Host {
+                user: "running account".into(),
+                ..host
+            }),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let context = SshContext::Forward(rule.id);
+    assert!(displayed_user(&context, &endpoint, &snapshot).is_none());
+    assert!(displayed_user(&SshContext::External, &endpoint, &snapshot).is_none());
+    snapshot.rules[0].service_protocol = Some(ServiceProtocol::Vnc);
+    assert!(displayed_user(&SshContext::External, &endpoint, &snapshot).is_none());
+}
+
+#[test]
+fn direct_vnc_link_uses_the_current_default_of_a_matching_saved_host() {
+    use crate::model::{AuthMethod, LoginIdentity};
+    let endpoint = Endpoint::parse("vnc://[2001:db8::1]:1025").unwrap();
+    let host = Host {
+        id: "saved".into(),
+        address: "2001:db8:0:0:0:0:0:1".into(),
+        port: 22,
+        user: "original".into(),
+        default_login_id: Some("other".into()),
+        logins: vec![LoginIdentity {
+            id: "other".into(),
+            label: String::new(),
+            user: "selected user".into(),
+            auth_method: AuthMethod::Password,
+            identity_files: vec![],
+        }],
+        ..Default::default()
+    };
+    let mut snapshot = Snapshot {
+        hosts: vec![host],
+        added_host_ids: vec!["saved".into()],
+        ..Default::default()
+    };
+    assert_eq!(
+        displayed_user(&SshContext::External, &endpoint, &snapshot).as_deref(),
+        Some("selected user")
+    );
+    snapshot.hosts[0].default_login_id = None;
+    assert_eq!(
+        displayed_user(&SshContext::External, &endpoint, &snapshot).as_deref(),
+        Some("original")
+    );
+    snapshot.hosts[0].hidden = true;
+    assert!(displayed_user(&SshContext::External, &endpoint, &snapshot).is_none());
+}
+
+#[test]
+fn vnc_over_ssh_displays_only_the_service_account() {
+    use crate::model::{AuthMethod, LoginIdentity, Runtime};
+    let endpoint = Endpoint::parse("vnc://127.0.0.1:15903").unwrap();
+    let identity = |id: &str, user: &str| LoginIdentity {
+        id: id.into(),
+        label: String::new(),
+        user: user.into(),
+        auth_method: AuthMethod::Password,
+        identity_files: vec![],
+    };
+    let host = Host {
+        id: "desktop-host".into(),
+        address: "192.0.2.10".into(),
+        user: "tunnel account".into(),
+        default_login_id: Some("default".into()),
+        logins: vec![
+            identity("default", "default desktop account"),
+            identity("selected", "selected desktop account"),
+        ],
+        ..Default::default()
+    };
+    let rule = Rule {
+        id: "forward".into(),
+        host_id: host.id.clone(),
+        bind_port: 0,
+        target_host: "127.0.0.1".into(),
+        target_port: 5903,
+        service_protocol: Some(ServiceProtocol::Vnc),
+        ..Default::default()
+    };
+    let service: crate::commands::Service = serde_json::from_value(serde_json::json!({
+        "id": "desktop", "name": "VNC", "port": 5903, "directProtocol": "vnc",
+        "hostIds": [host.id], "ruleIds": [rule.id], "revision": "r",
+        "noLocalEnvironment": true, "actions": [],
+        "control": {
+            "statusProbe": { "mode": "vncSessions", "actionId": "list",
+                "runningCodes": [], "stoppedCodes": [], "failedCodes": [] },
+            "checkAfterActions": false, "ttlSecs": 60
+        }
+    }))
+    .unwrap();
+    let mut snapshot = Snapshot {
+        hosts: vec![host.clone()],
+        rules: vec![rule.clone()],
+        runtimes: vec![Runtime {
+            rule_id: rule.id.clone(),
+            status: "listening".into(),
+            host_snapshot: Some(host.login(None).unwrap()),
+            bound_port: Some(15903),
+            ..Default::default()
+        }],
+        services: vec![service.clone()],
+        ..Default::default()
+    };
+    let observations = crate::service_control::Observations::default();
+    let context = SshContext::Forward(rule.id.clone());
+    let initial = context.service_user(&endpoint, &snapshot, &observations);
+    assert_eq!(initial.as_deref(), Some("default desktop account"));
+
+    let login = host.login(Some("selected")).unwrap();
+    observations.record(
+        &service,
+        &crate::service_control::identity(&[login]),
+        "run",
+        false,
+        "running",
+    );
+    let verified = context.service_user(&endpoint, &snapshot, &observations);
+    assert_eq!(verified.as_deref(), Some("selected desktop account"));
+    let link = SshContext::External.service_user(&endpoint, &snapshot, &observations);
+    assert_eq!(link, verified);
+
+    snapshot.services[0].revision = "updated".into();
+    let updated = context.service_user(&endpoint, &snapshot, &observations);
+    assert_eq!(updated.as_deref(), Some("default desktop account"));
+    snapshot.rules[0].target_host = "192.0.2.20".into();
+    let external_target = context.service_user(&endpoint, &snapshot, &observations);
+    assert!(external_target.is_none());
+}
+
+#[test]
+fn direct_vnc_link_matches_the_service_port_before_falling_back_to_host_address() {
+    let endpoint = Endpoint::parse("vnc://192.0.2.10:1025").unwrap();
+    let primary = Host {
+        id: "saved".into(),
+        address: "192.0.2.10".into(),
+        user: "service account".into(),
+        ..Default::default()
+    };
+    let other = Host {
+        id: "other".into(),
+        user: "another account".into(),
+        ..primary.clone()
+    };
+    let mut snapshot = Snapshot {
+        hosts: vec![primary, other],
+        added_host_ids: vec!["saved".into(), "other".into()],
+        ..Default::default()
+    };
+    assert!(displayed_user(&SshContext::External, &endpoint, &snapshot).is_none());
+    let mut service: crate::commands::Service = serde_json::from_value(serde_json::json!({
+        "id": "desktop", "name": "VNC", "port": 1025, "directProtocol": "vnc",
+        "hostIds": ["saved"], "ruleIds": [], "revision": "r",
+        "noLocalEnvironment": true, "actions": [],
+        "loginByHost": { "saved": "primary:saved" }
+    }))
+    .unwrap();
+    snapshot.hosts[0].default_login_id = Some("default".into());
+    snapshot.hosts[0].logins.push(crate::model::LoginIdentity {
+        id: "default".into(),
+        label: String::new(),
+        user: "host default".into(),
+        auth_method: crate::model::AuthMethod::Agent,
+        identity_files: vec![],
+    });
+    snapshot.services.push(service.clone());
+    assert_eq!(
+        displayed_user(&SshContext::External, &endpoint, &snapshot).as_deref(),
+        Some("service account")
+    );
+    service.host_ids = vec!["other".into()];
+    service.direct_protocol = Some(DirectProtocol::Http);
+    snapshot.services.push(service);
+    assert_eq!(
+        displayed_user(&SshContext::External, &endpoint, &snapshot).as_deref(),
+        Some("service account")
+    );
+    snapshot.services[1].direct_protocol = None;
+    assert!(displayed_user(&SshContext::External, &endpoint, &snapshot).is_none());
 }
 
 #[test]

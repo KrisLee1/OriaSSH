@@ -1,6 +1,8 @@
 import { FileTransferEdge, FileTransferPorts } from "./features/files/transfer-edge";
 import { FileTransferStatus, useFileActivities } from "./features/files/transfer-state";
 import { projectFileEdges } from "./features/files/transfer-graph";
+import { useFileEdgePresence } from "./features/files/use-file-edge-presence";
+import { wireTravelMs } from "./features/tunnels/wire-power";
 import { FileWorkspaceProvider, OpenFilesButton } from "./features/files/file-workspace";
 import { NativeLanguageSync } from "@/components/language/native-language-sync";
 import { mergeSnapshot } from "@/lib/snapshot-state";
@@ -13,12 +15,10 @@ import {
 } from "./features/terminal/terminal-workspace";
 import {
   PresetCommandProvider,
-  ServicesPage,
-  AddServiceButton,
-  ServiceCommandsButton,
-  HostServices,
+  HostServices, AddHostService,
 } from "./features/commands/preset-commands";
 import {
+  createContext, useContext,
   useCallback,
   memo,
   useEffect,
@@ -27,20 +27,20 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type ReactNode,
 } from "react";
+import { shallow } from "zustand/shallow";
 import { listen } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
 import { AnimatePresence, motion } from "motion/react";
-import { PageTransition, useEntranceMotion } from "./components/ui/motion";
+import { useEntranceMotion } from "./components/ui/motion";
 import { PageEmptyState } from "./components/page-empty-state";
 import {
   ReactFlow,
   Background,
-  Handle,
   Position,
   ReactFlowProvider,
   useReactFlow,
+  useStore,
   useNodesInitialized,
   useUpdateNodeInternals,
   applyNodeChanges,
@@ -51,12 +51,16 @@ import {
   type Viewport,
 } from "@xyflow/react";
 import {
+  ScrollTextIcon, EllipsisIcon,
+  BoltIcon,
   ServerPlusIcon,
-  GitPullRequestCreateArrowIcon,
+  ArrowRightIcon,
+  ArrowLeftIcon,
+  ArrowUpRightIcon,
+  NetworkIcon,
   Settings2Icon,
   MonitorIcon,
   ServerIcon,
-  ArrowRightIcon,
   PlayIcon,
   SquareIcon,
   MaximizeIcon,
@@ -72,60 +76,47 @@ import { WindowHeader } from "./components/window/window-header";
 import { Button } from "./components/ui/button";
 import { Toaster, toast } from "./components/ui/toast";
 import { Input } from "./components/ui/input";
-import { ScrollArea } from "./components/ui/scroll-area";
-import { Tabs, TabsList, TabsTrigger } from "./components/ui/tabs";
-import { Field, Modal, ModalActions } from "./components/tunnel-form";
-import { ConnectionFields, RuleEditor } from "./features/tunnels/rule-editor";
-import { HostSourceSettings } from "./features/hosts/source-settings";
-import { HostGroups, type HostGrouping } from "./features/hosts/host-groups";
-import { JumpRouteEditor } from "./features/hosts/jump-route-editor";
-import { HostTags } from "./features/hosts/host-tags";
-import { HostToolbar } from "./features/hosts/host-toolbar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "./components/ui/dropdown-menu";
+import { CanvasFind, type CanvasMatch } from "./features/tunnels/canvas-find";
+import { ForwardIcon } from "./features/tunnels/forward-icon";
+import { UndoDeleteItems, UndoDeleteMenu } from "./features/tunnels/undo-delete-menu";
+import { Modal, ModalActions } from "./components/tunnel-form";
+import { RuleEditor } from "./features/tunnels/rule-editor";
 import { HostTestButton } from "./features/hosts/host-test-button";
 import { AuthenticationField } from "./features/hosts/authentication-field";
-import { IdentityFilesEditor } from "./features/hosts/identity-files-editor";
+import { resolvedDefaultLogin, resolvedLogin, credentialKey, primaryLogin } from "./features/hosts/login-identities";
+import { CredentialManager } from "./features/hosts/credential-manager";
+import { HostCredentialMenu } from "./features/hosts/host-credential-menu";
+import { HostEditorFields } from "./features/hosts/host-editor-fields";
+import { HostDeleteDialog } from "./features/hosts/host-delete-dialog";
 import { HostDiscovery } from "./features/hosts/host-discovery";
 import {
   hostAuthLabels,
   hostAuthMethod,
-  needsInitialSecret,
+  passwordsToRequest,
   automaticAuthOutcome,
   type AutomaticAttempt,
 } from "./features/hosts/host-auth";
-import { addedHosts, hostFilterStatus } from "./features/hosts/host-collection";
-import { RuleToolbar } from "./features/tunnels/rule-toolbar";
+import { addedHosts, copyHostDraft } from "./features/hosts/host-collection";
+import { serviceHostIds } from "./features/commands/service-target";
 import { OpenServiceButton } from "./features/tunnels/service-protocol";
-import { VncClientSetting } from "./components/settings/vnc-client-setting";
+import { SettingsDialog, type SettingsCategory } from "./components/settings/settings-dialog";
 import {
   OpenProxyBrowserButton,
   ProxyServiceButtons,
 } from "./features/tunnels/proxy-browser";
 import { RuleActions } from "./features/tunnels/rule-actions";
-import {
-  ParameterField,
-  ParameterSwitch,
-  ParameterTitle,
-} from "./components/parameter-field";
-import {
-  Item,
-  ItemActions,
-  ItemContent,
-  ItemDescription,
-  ItemGroup,
-  ItemTitle,
-} from "./components/ui/item";
-import { Switch } from "./components/ui/switch";
+import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from "./components/ui/context-menu";
 import { AboutButton, AboutDialog } from "./components/settings/about-dialog";
 import { useApplicationUpdate } from "./lib/application-update";
-import {
-  Select,
-  SelectTrigger,
-  SelectContent,
-  SelectItem,
-  SelectValue,
-} from "./components/ui/select";
 import { RuntimeDetails } from "./features/tunnels/runtime-details";
-import { bytes, rate } from "./features/tunnels/runtime-format";
+import { bytes } from "./features/tunnels/runtime-format";
 import { runtimeStatus } from "./features/tunnels/runtime-status";
 import { ActivityView } from "./features/tunnels/activity-view";
 import { WorkspaceActions } from "./features/tunnels/workspace-actions";
@@ -134,15 +125,23 @@ import { ConnectionIcon } from "./features/tunnels/connection-icon";
 import { ConnectionEdge } from "./features/tunnels/connection-edge";
 import {
   projectCardRuntimes,
+  projectCanvasRoutes,
   projectCanvasEdges,
   type CardRuntime,
 } from "./features/tunnels/canvas-runtime";
+import { EndpointCards, EndpointRoute } from "./features/tunnels/endpoint-card";
+import { CanvasLinks, CardEdge } from "./features/tunnels/canvas-link";
+import { ConnectionPort } from "./features/tunnels/connection-port";
 import { LocalPortHandle } from "./features/tunnels/local-port-handle";
-import { LocalAddForward } from "./features/tunnels/local-add-forward";
 import {
-  createdCanvasLayout,
+  hostForwardDraft,
+  serviceLocalForward,
+  localForwardServiceIds,
   oppositeSide,
-  type CanvasCreation,
+  serviceEndpointSide,
+  availableHostPosition,
+  type CanvasPoint,
+  type HostPlacement,
 } from "./features/tunnels/canvas-creation";
 import {
   PORT_LAYOUT_KEY,
@@ -151,28 +150,25 @@ import {
 } from "./features/tunnels/port-placement";
 import {
   canvasLayout,
+  readCanvasLayout,
   canvasPortId,
+  canvasPortSize,
   localPortSide,
   localCardSize,
+  localPortOffsets,
   reconcileCanvasNodes,
 } from "./features/tunnels/canvas-state";
 import { connectionPorts } from "./features/tunnels/connection-visual";
 import {
   emptyHost,
-  emptyRule,
-  rulePath,
-  networkChanged,
+  endpoint,
+  displayedRoute,
   jumpHosts,
 } from "./features/tunnels/rule-model";
-import {
-  AppearanceSettings,
-  WindowSettings,
-} from "./components/settings/appearance-settings";
 import * as bridge from "./lib/bridge";
-import type { Host, Rule, Runtime, Snapshot, BatchResult } from "./types";
+import type { Host, HostDeletionImpact, RemoteService, Rule, Runtime, Snapshot, BatchResult, ConfigExportMode } from "./types";
 import i18n from "./i18n";
 import {
-  groupRulesByHost,
   canvasHostGroups,
   groupPositions,
 } from "./features/tunnels/rule-groups";
@@ -245,6 +241,16 @@ function useSnapshot() {
   return { data, accept, error, setError };
 }
 
+const saveHostProfile = (host: Host) =>
+  host.source === "config" ? bridge.saveHostMetadata(host) : bridge.saveHost(host);
+
+const CanvasNavigation = createContext<{
+  logs: (host: string) => void;
+  details: (id: string) => void;
+  copyHost: (host: Host) => void;
+  setDefaultLogin: (host: Host, loginId: string | null) => void;
+  removeHost: (host: Host) => void;
+} | null>(null);
 export function App() {
   const { t } = useTranslation("tunnel");
   const [about, setAbout] = useState(false);
@@ -257,53 +263,64 @@ export function App() {
       void subscription.then((off) => off()).catch(() => {});
     };
   }, [openAbout]);
-  const rowEntrance = useEntranceMotion(4);
   const { data, accept, error, setError } = useSnapshot();
-  const [page, setPage] = useState("canvas");
-  const [settings, setSettings] = useState(false);
+  const [logHost, setLogHost] = useState<string | null>(null);
+  const [canvasMatch, setCanvasMatch] = useState<CanvasMatch>();
+  const clearCanvasMatch = useCallback(() => setCanvasMatch(undefined), []);
+  const [settings, setSettings] = useState<SettingsCategory | null>(null);
+  const [managingHostCredentials, setManagingHostCredentials] = useState(false);
   const [importing, setImporting] = useState(false);
   const [deleting, setDeleting] = useState<Rule[] | null>(null);
-  const [deletingHost, setDeletingHost] = useState<Host | null>(null);
-  const [stopHostWork, setStopHostWork] = useState<boolean | null>(null);
-  const [deleteHostError, setDeleteHostError] = useState("");
-  useEffect(() => {
-    if (!deletingHost) return;
-    let live = true;
-    void bridge.hostHasActiveWork(deletingHost.id).then(
-      (active) => { if (live) setStopHostWork(active); },
-      () => { if (live) setStopHostWork(true); },
-    );
-    return () => { live = false; };
-  }, [deletingHost]);
+  const [selectedHost, setSelectedHost] = useState("");
+  const [hostDeletion, setHostDeletion] = useState<{
+    host: Host;
+    impact: HostDeletionImpact;
+    error: string;
+    stale: boolean;
+  } | null>(null);
+  const pendingHostDeletion = useRef<{ id: string } | null>(null);
+  const requestHostDeletion = useCallback(async (host: Host) => {
+    if (pendingHostDeletion.current?.id === host.id) return;
+    const request = { id: host.id };
+    pendingHostDeletion.current = request;
+    try {
+      const impact = await bridge.previewHostDeletion(host.id);
+      if (pendingHostDeletion.current !== request) return;
+      setSelectedHost((id) => id === host.id ? "" : id);
+      setHostDeletion({ host, impact, error: "", stale: false });
+    } catch (error) {
+      if (pendingHostDeletion.current === request) setError(String(error));
+    } finally {
+      if (pendingHostDeletion.current === request) pendingHostDeletion.current = null;
+    }
+  }, [setError]);
 
   const [hostDraft, setHostDraft] = useState<Host | null>(null);
+  const newHostOrigin = useRef<CanvasPoint | null>(null);
+  const [hostPlacement, setHostPlacement] = useState<HostPlacement | null>(null);
   const [discovering, setDiscovering] = useState(false);
   const [addedInSession, setAddedInSession] = useState<string[]>([]);
+  const portFocus = useRef<"bind" | "target" | null>(null);
   const [ruleDraft, setRuleDraft] = useState<Rule | null>(null);
   const [ruleServiceSelection, setRuleServiceSelection] = useState<{
     draft: Rule;
     ids: string[];
   } | null>(null);
-  const [draftPlacement, setDraftPlacement] = useState<PortPlacement | null>(
-    null,
-  );
-  const [canvasCreation, setCanvasCreation] = useState<CanvasCreation | null>(
-    null,
-  );
   const [focusRuleId, setFocusRuleId] = useState("");
-  const [ruleSuspended, setRuleSuspended] = useState(false);
   const [hostFromRule, setHostFromRule] = useState(false);
   const [authHostId, setAuthHostId] = useState<string | null>(null);
+  const [authLogin, setAuthLogin] = useState<string>();
   const [authId, setAuthId] = useState<string | null>(null);
   const automaticAttempts = useRef(new Map<string, AutomaticAttempt>());
+  const passwordChecks = useRef(new Map<string, symbol>());
   const [authFallback, setAuthFallback] = useState(false);
+  const [requestedPasswords, setRequestedPasswords] = useState<string[]>([]);
   const [jumpSecrets, setJumpSecrets] = useState<Record<string, string>>({});
   const [secret, setSecret] = useState("");
   const [busy, setBusy] = useState(false);
-  const [selectedHost, setSelectedHost] = useState("");
-  const [selectedRules, setSelectedRules] = useState<string[]>([]);
   const [inspecting, setInspecting] = useState("");
   const [batchAuth, setBatchAuth] = useState<string[] | null>(null);
+  const [batchPasswordKeys, setBatchPasswordKeys] = useState<string[]>([]);
   const [batchSecrets, setBatchSecrets] = useState<Record<string, string>>({});
   const [rememberPasswords, setRememberPasswords] = useState<
     Record<string, boolean>
@@ -320,8 +337,6 @@ export function App() {
       void unlisten.then((off) => off()).catch(() => {});
     };
   }, [setError]);
-  const rememberHostIds = () =>
-    Object.keys(rememberPasswords).filter((id) => rememberPasswords[id]);
   useEffect(() => {
     if (!error) {
       toast.close("app-error");
@@ -358,7 +373,7 @@ export function App() {
       timeout: rejected ? 6000 : 4000,
     });
   };
-  const [exporting, setExporting] = useState<string[] | null>(null);
+  const [exporting, setExporting] = useState<ConfigExportMode | null>(null);
   const action = useCallback(
     async (fn: () => Promise<unknown>, onError: (message: string) => void = setError) => {
       setBusy(true);
@@ -377,10 +392,27 @@ export function App() {
     },
     [accept, setError],
   );
+  const undoDelete = (kind: "host" | "forward") =>
+    void action(() => bridge.undoDelete(kind));
+  const canvasNavigation = useMemo(
+    () => ({
+      logs: (host: string) => setLogHost(host),
+      details: (id: string) => {
+        setSelectedHost(id);
+      },
+      copyHost: (host: Host) => setHostDraft(copyHostDraft(host, t("copyName", { name: host.name }))),
+      setDefaultLogin: (host: Host, loginId: string | null) => {
+        void action(() => saveHostProfile({ ...host, defaultLoginId: loginId }));
+      },
+      removeHost: requestHostDeletion,
+    }),
+    [action, requestHostDeletion, t],
+  );
   const refresh = () => action(bridge.refreshHosts);
   const managedHosts = addedHosts(data, addedInSession);
   const managedHostIds = new Set(managedHosts.map((host) => host.id));
-  const openHostDiscovery = (fromRule = false) => {
+  const openHostDiscovery = (fromRule = false, origin: CanvasPoint | null = null) => {
+    newHostOrigin.current = origin;
     setHostFromRule(fromRule);
     setDiscovering(true);
     void refresh();
@@ -396,14 +428,7 @@ export function App() {
     window.addEventListener("focus", focus);
     return () => window.removeEventListener("focus", focus);
   }, [accept, setError]);
-  const newRule = (hostId = "", placement: PortPlacement | null = null) => {
-    setRuleSuspended(false);
-    setDraftPlacement(placement);
-    setRuleDraft(emptyRule(hostId));
-  };
   const copyRule = (rule: Rule) => {
-    setDraftPlacement(null);
-    setRuleSuspended(false);
     setRuleDraft({
       ...rule,
       id: "",
@@ -412,50 +437,76 @@ export function App() {
       autoConnect: false,
     });
   };
+  const createServiceForward = async (hostId: string, serviceId: string) => {
+    if (busy || !bridge.desktop) return;
+    const host = managedHosts.find((item) => item.id === hostId);
+    const service = data.services?.find((item) => item.id === serviceId);
+    if (!host || host.diagnostics.length || !service || !serviceHostIds(service, data).includes(hostId)) return;
+    const draft = serviceLocalForward(hostId, service, data.rules);
+    if (!draft) return;
+    const rule = { ...draft, id: crypto.randomUUID() };
+    const ok = await action(() => bridge.saveRule(rule, [{
+      id: service.id, revision: service.revision, selected: true,
+    }]));
+    if (ok) return rule.id;
+  };
+  const linkForwardHost = (ruleId: string, hostId: string) => {
+    if (busy || !bridge.desktop) return;
+    const rule = data.rules.find((item) => item.id === ruleId);
+    const host = managedHosts.find((item) => item.id === hostId);
+    if (!rule || rule.kind === "L" || !host || host.diagnostics.length || rule.hostId === hostId) return;
+    setRuleDraft({ ...rule, hostId });
+  };
   const saveDraft = async (
     launch: boolean,
     serviceLinks?: import("@/types").ServiceLink[],
   ) => {
     if (!ruleDraft) return;
-    const rule = { ...ruleDraft, id: ruleDraft.id || crypto.randomUUID() };
-    const old = data.rules.find((r) => r.id === rule.id);
+    const rule = {
+      ...ruleDraft,
+      serviceProtocol: ruleDraft.kind === "D" ? null : ruleDraft.serviceProtocol,
+      id: ruleDraft.id || crypto.randomUUID(),
+    };
     const running = data.runtimes.some(
       (r) =>
         r.ruleId === rule.id &&
         !["failed", "stopped", "needs-attention"].includes(r.status),
     );
-    const reconnect = !!old && running && networkChanged(old, rule);
+    let savedHost: Host | undefined;
     const ok = await action(async () => {
-      const result = await bridge.saveRule(rule, serviceLinks);
-      if (reconnect) await bridge.stopRule(rule.id);
+      let result = await bridge.saveRule(rule, serviceLinks);
+      if (running && launch) await bridge.stopRule(rule.id);
+      if (launch) {
+        if (running) result = await bridge.snapshot();
+        savedHost = result.hosts.find((host) => host.id === rule.hostId);
+      }
       return result;
     });
     if (ok) {
-      if (!old && draftPlacement)
-        setCanvasCreation({
-          ruleId: rule.id,
-          hostId: rule.hostId,
-          placement: draftPlacement,
-          newHost: !data.rules.some((saved) => saved.hostId === rule.hostId),
-        });
-      setDraftPlacement(null);
       setRuleDraft(null);
-      setRuleSuspended(false);
-      setPage("canvas");
+
       setFocusRuleId(rule.id);
-      if (launch || reconnect) start(rule.id, rule.hostId);
+      if (launch) void beginConnection(rule.id, resolvedDefaultLogin(savedHost));
     }
   };
   const stop = (id: string) => {
+    passwordChecks.current.delete(id);
     automaticAttempts.current.delete(id);
     return action(() => bridge.stopRule(id));
   };
-  const beginConnection = (id: string, host?: Host, test = false) => {
+  const beginConnection = async (id: string, host?: Host, test = false) => {
+    const check = Symbol();
+    passwordChecks.current.set(id, check);
+    const route = host ? [...jumpHosts(data.hosts, host), host] : [];
+    const withoutPasswords = await passwordsToRequest(route);
+    if (passwordChecks.current.get(id) !== check) return;
+    passwordChecks.current.delete(id);
     setSecret("");
     setJumpSecrets({});
     setAuthFallback(false);
-    const route = host ? [...jumpHosts(data.hosts, host), host] : [];
-    if (!host || needsInitialSecret(route)) {
+    setAuthLogin(host && (host.activeLoginId || primaryLogin(host)));
+    if (!host || withoutPasswords.length) {
+      setRequestedPasswords(withoutPasswords.map(credentialKey));
       setAuthHostId(test ? (host?.id ?? id.slice("host-test:".length)) : null);
       setAuthId(id);
       return;
@@ -466,24 +517,23 @@ export function App() {
       hostId: test ? host.id : undefined,
     });
     void action(() =>
-      test ? bridge.testHost(host.id, "") : bridge.startRule(id, ""),
+      test ? bridge.testHost(host.id, "", {}, [],host.activeLoginId) : bridge.startRule(id, "",{},[],host.activeLoginId || primaryLogin(host)),
     ).then((ok) => {
       if (!ok) automaticAttempts.current.delete(id);
     });
   };
-  const start = (id: string, hostId?: string) =>
-    beginConnection(
-      id,
-      data.hosts.find(
-        (host) =>
-          host.id ===
-          (hostId || data.rules.find((rule) => rule.id === id)?.hostId),
-      ),
-    );
+  const start = (id: string) => {
+    const rule = data.rules.find((rule) => rule.id === id);
+    const host = data.hosts.find((host) => host.id === rule?.hostId);
+    void beginConnection(id, resolvedDefaultLogin(host));
+  };
   const startHost = (id: string, saved?: Host) =>
-    beginConnection(
+    void beginConnection(
       "host-test:" + id,
-      saved || data.hosts.find((host) => host.id === id),
+      resolvedLogin(
+        saved || data.hosts.find((h) => h.id === id),
+        (saved || data.hosts.find((h) => h.id === id))?.defaultLoginId,
+      ),
       true,
     );
   useEffect(() => {
@@ -494,19 +544,27 @@ export function App() {
       );
       if (outcome === "waiting" || (outcome === "prompt" && authId)) continue;
       automaticAttempts.current.delete(id);
-      const host = data.hosts.find(
-        (host) =>
-          host.id ===
-          (attempt.hostId || data.rules.find((rule) => rule.id === id)?.hostId),
+      const rule = data.rules.find(r => r.id === id);
+      const frozen = data.runtimes.find(r => r.ruleId === id)?.hostSnapshot;
+      const loginId = frozen
+        ? frozen.activeLoginId ?? primaryLogin(frozen)
+        : rule?.loginIdentityId;
+      const host = resolvedLogin(
+        data.hosts.find((h) => h.id === (attempt.hostId || rule?.hostId)),
+        loginId,
       );
+
       if (
         outcome !== "prompt" ||
         !host ||
+        (!attempt.hostId && (!rule || (rule.loginIdentityId ?? primaryLogin(host)) !==
+          (loginId ?? primaryLogin(host)))) ||
         [...jumpHosts(data.hosts, host), host].every(
           (hop) => hop.authMethod === "agent",
         )
       )
         continue;
+      setAuthLogin(host.activeLoginId || primaryLogin(host));
       setAuthHostId(attempt.hostId || null);
       setAuthId(id);
       setAuthFallback(true);
@@ -516,17 +574,24 @@ export function App() {
     }
   }, [data.runtimes, data.hosts, data.rules, authId]);
   const closeHost = () => {
+    setManagingHostCredentials(false);
     setHostDraft(null);
     setHostFromRule(false);
   };
+  const hostNeedsCredential = hostDraft?.credentialOnly && (
+    !hostDraft.defaultLoginId ||
+    !hostDraft.credentialIds?.includes(hostDraft.defaultLoginId) ||
+    !data.loginCredentials?.some(({ id }) => id === hostDraft.defaultLoginId)
+  );
   const saveHostDraft = async (test: boolean) => {
-    if (!hostDraft) return;
+    if (!hostDraft || hostNeedsCredential) return;
     const host = { ...hostDraft, id: hostDraft.id || crypto.randomUUID() };
-    const ok = await action(() =>
-      host.source === "config"
-        ? bridge.saveHostMetadata(host)
-        : bridge.saveHost(host),
-    );
+    let saved: Host | undefined;
+    const ok = await action(async () => {
+      const snapshot = await saveHostProfile(host);
+      saved = snapshot.hosts.find((item) => item.id === host.id);
+      return snapshot;
+    });
     if (ok) {
       if (hostFromRule && ruleDraft) {
         const next = { ...ruleDraft, hostId: host.id };
@@ -534,45 +599,53 @@ export function App() {
           setRuleServiceSelection({ ...ruleServiceSelection, draft: next });
         setRuleDraft(next);
       }
+      if (!hostDraft.id && !hostFromRule) {
+        setHostPlacement({ ids: [host.id], origin: newHostOrigin.current });
+      }
       closeHost();
-      if (test) startHost(host.id, host);
+      if (test && saved) startHost(host.id, saved);
     }
   };
-  const authTarget = data.hosts.find(
-    (h) =>
-      h.id === (authHostId || data.rules.find((r) => r.id === authId)?.hostId),
+  const authRule = data.rules.find((r) => r.id === authId);
+  const authTarget = resolvedLogin(
+    data.hosts.find((h) => h.id === (authHostId || authRule?.hostId)),
+    authLogin,
   );
   const authPromptHosts = authTarget
     ? [...jumpHosts(data.hosts, authTarget), authTarget].filter((host) =>
         authFallback
           ? host.authMethod !== "agent"
-          : host.authMethod === "password",
+          : requestedPasswords.includes(credentialKey(host)),
       )
     : [];
-  const batchRouteHosts = (ids: string[]) =>
-    data.hosts.filter((host) =>
-      ids.some((id) => {
-        const target = data.hosts.find(
-          (h) => h.id === data.rules.find((r) => r.id === id)?.hostId,
-        );
-        return (
-          host.id === target?.id ||
-          jumpHosts(data.hosts, target).some((hop) => hop.id === host.id)
-        );
-      }),
-    );
-  const startMany = (ids: string[], fromTray = false) => {
-    setBatchSecrets({});
-    if (needsInitialSecret(batchRouteHosts(ids))) {
-      setBatchAuth(ids);
-      return;
+  const batchRouteHosts = (ids: string[]) => {
+    const hosts = new Map<string, Host>();
+    for (const id of ids) {
+      const rule = data.rules.find((r) => r.id === id);
+      const target = resolvedLogin(
+        data.hosts.find((h) => h.id === rule?.hostId),
+        rule?.loginIdentityId,
+      );
+      if (target)
+        for (const h of [...jumpHosts(data.hosts, target), target])
+          hosts.set(credentialKey(h), h);
     }
+    return [...hosts.values()];
+  };
+  const runBatch = (
+    ids: string[],
+    credentials: Record<string, string>,
+    remember: string[],
+    fromTray = false,
+  ) => {
+    setBatchSecrets({});
+    setBatchAuth(null);
     for (const id of ids)
       automaticAttempts.current.set(id, {
         previousRunId: data.runtimes.find((r) => r.ruleId === id)?.runId,
       });
     void action(async () => {
-      const results = await bridge.startBatch(ids, {});
+      const results = await bridge.startBatch(ids, credentials, remember);
       for (const result of results)
         if (!result.accepted) automaticAttempts.current.delete(result.id);
       notifyBatch(results, "start");
@@ -584,6 +657,25 @@ export function App() {
         if (fromTray) void bridge.showMainWindow();
       }
     });
+  };
+  const startMany = async (ids: string[], fromTray = false) => {
+    const check = Symbol();
+    for (const id of ids) passwordChecks.current.set(id, check);
+    setBatchSecrets({});
+    const missing = await passwordsToRequest(batchRouteHosts(ids));
+    const current = ids.filter((id) => passwordChecks.current.get(id) === check);
+    if (!current.length) return;
+    for (const id of current) passwordChecks.current.delete(id);
+    if (missing.length) {
+      const keys = new Set(batchRouteHosts(current).map(credentialKey));
+      const requested = missing.map(credentialKey).filter((key) => keys.has(key));
+      if (requested.length) {
+        setBatchPasswordKeys(requested);
+        setBatchAuth(current);
+        return;
+      }
+    }
+    runBatch(current, {}, [], fromTray);
   };
   const trayStart = useRef(startMany);
   useLayoutEffect(() => {
@@ -603,6 +695,12 @@ export function App() {
       void subscription.then((off) => off()).catch(() => {});
     };
   }, []);
+  const draftUser = hostDraft && (
+    (hostDraft.credentialIds?.includes(hostDraft.defaultLoginId ?? "")
+      ? data.loginCredentials?.find(({ id }) => id === hostDraft.defaultLoginId)?.user
+      : resolvedLogin(hostDraft, hostDraft.defaultLoginId)?.user)
+    ?? hostDraft.user
+  );
   const duplicateHost =
     hostDraft?.source === "manual" &&
     managedHosts.find(
@@ -610,80 +708,55 @@ export function App() {
         h.id !== hostDraft.id &&
         h.address === hostDraft.address &&
         h.port === hostDraft.port &&
-        h.user === hostDraft.user,
+        h.user === draftUser,
     );
+  const savedEditingRule = data.rules.find(rule => rule.id === ruleDraft?.id);
+  const editingRuntime = ruleDraft?.id ? data.runtimes.find((runtime) =>
+    runtime.ruleId === ruleDraft.id && !["failed", "stopped", "needs-attention"].includes(runtime.status),
+  ) : undefined;
   const pending = data.runtimes.find((r) => r.status === "verifying-host");
   const needsInput = Boolean(authId || batchAuth || pending);
   useEffect(() => {
     if (bridge.desktop && needsInput) void bridge.showMainWindow();
   }, [needsInput]);
-  const selection = selectedRules.filter((id) =>
-    data.rules.some((r) => r.id === id),
-  );
-  const deletingHostRules = deletingHost
-    ? data.rules.filter(
-        (r) =>
-          r.hostId === deletingHost.id ||
-          jumpHosts(
-            data.hosts,
-            data.hosts.find((h) => h.id === r.hostId),
-          ).some((h) => h.id === deletingHost.id),
-      )
-    : [];
   const batchHosts = batchRouteHosts(batchAuth || []).filter(
-    (host) => host.authMethod === "password",
+    (host) => batchPasswordKeys.includes(credentialKey(host)),
   );
   const inspected = data.rules.find((r) => r.id === inspecting);
+  const inspectedHost = inspected && data.hosts.find((host) => host.id === inspected.hostId);
+  const inspectedLogin = inspected && resolvedLogin(inspectedHost, inspected.loginIdentityId);
+  const inspectedServices = inspected?.kind === "L" && inspectedHost
+    ? (data.services ?? []).filter(service => serviceHostIds(service, data).includes(inspectedHost.id))
+    : [];
+  const inspectedServiceId = inspected && inspectedHost && inspectedServices.length
+    ? localForwardServiceIds(inspectedHost, [inspected], inspectedServices).get(inspected.id)
+    : undefined;
+  const inspectedName = inspectedServices.find(service => service.id === inspectedServiceId)?.name || inspected?.name;
   const active = data.runtimes.filter(
     (r) =>
       !r.ruleId.startsWith("host-test:") &&
       !["failed", "stopped", "tested", "needs-attention"].includes(r.status),
   ).length;
   return (
-    <TerminalWorkspaceProvider data={data}><FileWorkspaceProvider data={data}>
+    <TerminalWorkspaceProvider
+      data={data}
+      commandSettingsActive={settings === "terminal"}
+      openCommandSettings={() => setSettings("terminal")}
+    ><FileWorkspaceProvider data={data}>
       <NativeLanguageSync />
       <FirstUsePreferences ready={data.revision >= 0} />
       <PresetCommandProvider
         data={data}
         onSnapshot={accept}
-        page={page === "services"}
       >
         <div className="app-shell tunnel-app">
           <WindowHeader
-            fixedLeftActions={
-              page === "services" ? (
-                <AddServiceButton />
-              ) : page === "hosts" ||
-                page === "canvas" ||
-                page === "tunnels" ? (
-                <>
-                  {(page === "hosts" || page === "canvas") && (
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={t("addHost")}
-                      title={t("addHost")}
-                      disabled={!bridge.desktop}
-                      onClick={() => openHostDiscovery()}
-                    >
-                      <ServerPlusIcon />
-                    </Button>
-                  )}
-                  {(page === "canvas" || page === "tunnels") && (
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={t("add")}
-                      title={t("add")}
-                      disabled={!bridge.desktop}
-                      onClick={() => newRule()}
-                    >
-                      <GitPullRequestCreateArrowIcon />
-                    </Button>
-                  )}
-                </>
-              ) : null
-            }
+            fixedLeftActions={<>
+              <Button variant="ghost" size="icon-sm" aria-label={t("addHost")} title={t("addHost")}
+                disabled={!bridge.desktop} onClick={() => openHostDiscovery()}><ServerPlusIcon /></Button>
+              <CanvasFind data={data} locate={setCanvasMatch} />
+              <UndoDeleteMenu history={data} disabled={busy || !bridge.desktop} onUndo={undoDelete} />
+            </>}
             fixedRightActions={
               <>
                 <WorkspaceActions
@@ -692,8 +765,10 @@ export function App() {
                   available={bridge.desktop}
                   onStartAll={() => startMany(data.rules.map((r) => r.id))}
                   onStopAll={() => {
-                    for (const rule of data.rules)
+                    for (const rule of data.rules) {
+                      passwordChecks.current.delete(rule.id);
                       automaticAttempts.current.delete(rule.id);
+                    }
                     void action(async () =>
                       notifyBatch(
                         await bridge.stopBatch(data.rules.map((r) => r.id)),
@@ -704,324 +779,77 @@ export function App() {
                 />
               </>
             }
-            centerContent={
-              <Tabs value={page} onValueChange={setPage}>
-                <TabsList variant="soft">
-                  <TabsTrigger value="canvas">{t("canvas")}</TabsTrigger>
-                  <TabsTrigger value="tunnels">{t("tunnels")}</TabsTrigger>
-                  <TabsTrigger value="services">
-                    {t("services", { ns: "commands" })}
-                  </TabsTrigger>
-                  <TabsTrigger value="hosts">{t("hosts")}</TabsTrigger>
-                  <TabsTrigger value="activity">{t("activity")}</TabsTrigger>
-                </TabsList>
-              </Tabs>
-            }
           >
             <OpenFilesButton/><OpenTerminalButton workspace />
             <Button
               variant="ghost"
               size="icon-sm"
               aria-label={t("settings")}
-              onClick={() => setSettings(true)}
+              title={t("settings")}
+              aria-haspopup="dialog"
+              onClick={() => setSettings("general")}
             >
-              <Settings2Icon />
+              <BoltIcon aria-hidden="true" />
             </Button>
             <AboutButton snapshot={updates.snapshot} onClick={openAbout} />
           </WindowHeader>
-          {ruleDraft && ruleSuspended && (
-            <div className="draft-return overlay">
-              <Button size="sm" onClick={() => setRuleSuspended(false)}>
-                {t("resumeDraft")}
-              </Button>
-            </div>
-          )}
           <main>
-            <PageTransition key={page}>
-              {page === "canvas" ? (
-                <ReactFlowProvider>
-                  <TunnelCanvas
-                    data={data}
-                    onAdd={(placement) => newRule("", placement)}
-                    onHostEdit={setHostDraft}
-                    onHostAddForward={(id) => newRule(id)}
-                    canAdd={!busy && bridge.desktop}
-                    creation={canvasCreation}
-                    onCreationPlaced={() => setCanvasCreation(null)}
-                    onStart={start}
-                    onOpenService={(id, internalVnc) =>
-                      void action(() => bridge.openService(id, internalVnc))
-                    }
-                    onOpenProxyBrowser={(id, browser, serviceId) =>
-                      void action(() =>
-                        bridge.openProxyBrowser(id, browser, serviceId),
-                      )
-                    }
-                    onStop={stop}
-                    onDetails={(rule) => setInspecting(rule.id)}
-                    onCopy={copyRule}
-                    onDelete={(rule) => setDeleting([rule])}
-                    onEdit={(rule) => {
-                      setRuleSuspended(false);
-                      setRuleDraft(rule);
-                    }}
-                    focusRuleId={focusRuleId}
-                    onFocusDone={() => setFocusRuleId("")}
-                  />
-                </ReactFlowProvider>
-              ) : page === "services" ? (
-                <ServicesPage />
-              ) : page === "activity" ? (
-                <ActivityView data={data} />
-              ) : page === "hosts" ? (
-                <Hosts
-                  data={{ ...data, hosts: managedHosts }}
-                  busy={busy}
-                  selected={selectedHost}
-                  setSelected={setSelectedHost}
-                  onEdit={setHostDraft}
-                  onUndo={() => void action(() => bridge.undoDelete("host"))}
-                  onAdd={() => openHostDiscovery()}
-                  onForward={(id) => newRule(id)}
-                  onTest={startHost}
-                  onStopTest={(id) => void stop("host-test:" + id)}
-                  onDelete={(host) => {
-                    setStopHostWork(null);
-                    setDeleteHostError("");
-                    setDeletingHost(host);
-                  }}
-                  onCopy={(h) =>
-                    setHostDraft({
-                      ...h,
-                      id: "",
-                      source: "manual",
-                      sourceFile: undefined,
-                      fieldSources: {},
-                      configuredForwards: [],
-                      hidden: false,
-                      diagnostics: [],
-                      name: t("copyName", { name: h.name }),
-                    })
-                  }
-                />
-              ) : (
-                <ScrollArea
-                  className="page-scroll-area"
-                  viewportClassName="page tunnels-page scroll-fade"
-                >
-                  <header className="tunnels-page-heading">
-                    <h1>{t("tunnels")}</h1>
-                    <span>{t("currentWorkspace")}</span>
-                  </header>
-                  <RuleToolbar
-                    count={data.rules.length}
-                    selected={selection.length}
-                    undoCount={data.forwardUndoCount}
-                    busy={busy}
-                    available={bridge.desktop}
-                    onToggleAll={(checked) =>
-                      setSelectedRules(
-                        checked ? data.rules.map((r) => r.id) : [],
-                      )
-                    }
-                    onStart={() => startMany(selection)}
-                    onStop={() => {
-                      for (const id of selection)
-                        automaticAttempts.current.delete(id);
-                      void action(async () =>
-                        notifyBatch(await bridge.stopBatch(selection), "stop"),
-                      );
-                    }}
-                    onDelete={() =>
-                      setDeleting(
-                        data.rules.filter((r) => selection.includes(r.id)),
-                      )
-                    }
-                    onImport={() => setImporting(true)}
-                    onExport={() => {
-                      setExporting(
-                        selection.length
-                          ? selection
-                          : data.rules.map((r) => r.id),
-                      );
-                    }}
-                    onUndo={() => void action(() => bridge.undoDelete("forward"))}
-                  />
-                  {!data.rules.length ? (
-                    <PageEmptyState
-                      className="min-h-70"
-                      icon={<GraphStarIcon />}
-                      title={t("noRules")}
-                      description={t("emptyBody")}
-                      action={
-                        <Button
-                          type="button"
-                          variant="primary-soft"
-                          disabled={busy || !bridge.desktop}
-                          onClick={() => newRule()}
-                        >
-                          <GitPullRequestCreateArrowIcon aria-hidden="true" />
-                          {t("add")}
-                        </Button>
-                      }
-                    />
-                  ) : (
-                    <div className="rule-list">
-                      {groupRulesByHost(data.rules, data.hosts).map((group) => (
-                        <section className="rule-host-group" key={group.id}>
-                          <header className="rule-group-heading">
-                            <ServerIcon size={17} />
-                            <div>
-                              <h2>{group.host?.name || t("sourceMissing")}</h2>
-                              {group.host && (
-                                <code>
-                                  {group.host.user}@{group.host.address}:
-                                  {group.host.port}
-                                </code>
-                              )}
-                            </div>
-                            <span className="source-badge">
-                              {t("forwardCount", { count: group.rules.length })}
-                            </span>
-                          </header>
-                          {group.rules.map((rule) => {
-                            const host = group.host,
-                              runtime = data.runtimes.find(
-                                (r) => r.ruleId === rule.id,
-                              );
-                            return (
-                              <motion.div
-                                className="rule-row themed-surface"
-                                key={rule.id}
-                                {...rowEntrance}
-                              >
-                                <input
-                                  className="rule-select"
-                                  type="checkbox"
-                                  aria-label={t("selectRule", {
-                                    name: rule.name,
-                                  })}
-                                  checked={selection.includes(rule.id)}
-                                  onChange={(e) =>
-                                    setSelectedRules(
-                                      e.target.checked
-                                        ? [...selection, rule.id]
-                                        : selection.filter(
-                                            (id) => id !== rule.id,
-                                          ),
-                                    )
-                                  }
-                                />
-                                <div className="rule-row-heading">
-                                  <div className="rule-summary">
-                                    <strong className="rule-name">
-                                      <ConnectionIcon
-                                        icon={rule.icon}
-                                        color={rule.color}
-                                      />
-                                      <span title={rule.name}>{rule.name}</span>
-                                    </strong>
-                                    <Status runtime={runtime} />
-                                  </div>
-                                  <small className="rule-metrics">
-                                    {runtime && (
-                                      <>
-                                        ↑ {rate(runtime.sentPerSecond)} · ↓{" "}
-                                        {rate(runtime.receivedPerSecond)} ·{" "}
-                                        {t("connectionCount", {
-                                          count: runtime.connections,
-                                        })}
-                                      </>
-                                    )}
-                                  </small>
-                                </div>
-                                <small
-                                  className="rule-route"
-                                  title={rulePath(
-                                    rule,
-                                    host?.name || t("sourceMissing"),
-                                    t("local"),
-                                  )}
-                                >
-                                  {rule.kind} ·{" "}
-                                  {rulePath(
-                                    rule,
-                                    host?.name || t("sourceMissing"),
-                                    t("local"),
-                                  )}
-                                </small>
-                                <div className="rule-row-actions">
-                                  <RuleActions
-                                    rule={rule}
-                                    onDetails={(item) => setInspecting(item.id)}
-                                    onEdit={(item) => {
-                                      setRuleSuspended(false);
-                                      setRuleDraft(item);
-                                    }}
-                                    onCopy={copyRule}
-                                    onDelete={(item) => setDeleting([item])}
-                                    serviceActions={
-                                      <>
-                                        {rule.kind !== "D" && (
-                                          <ServiceCommandsButton
-                                            ruleId={rule.id}
-                                          />
-                                        )}
-                                        <OpenProxyBrowserButton
-                                          rule={rule}
-                                          runtime={runtime}
-                                          desktop={bridge.desktop}
-                                          onOpen={(id, browser) =>
-                                            void action(() =>
-                                              bridge.openProxyBrowser(
-                                                id,
-                                                browser,
-                                              ),
-                                            )
-                                          }
-                                        />
-                                      </>
-                                    }
-                                  >
-                                    <RunButton
-                                      runtime={runtime}
-                                      start={() => start(rule.id)}
-                                      stop={() => void stop(rule.id)}
-                                    />
-                                  </RuleActions>
-                                  <ProxyServiceButtons
-                                    rule={rule}
-                                    runtime={runtime}
-                                    services={data.services}
-                                    desktop={bridge.desktop}
-                                    expandable={false}
-                                    onOpen={(id, browser, serviceId) =>
-                                      void action(() =>
-                                        bridge.openProxyBrowser(
-                                          id,
-                                          browser,
-                                          serviceId,
-                                        ),
-                                      )
-                                    }
-                                  />
-                                </div>
-                              </motion.div>
-                            );
-                          })}
-                        </section>
-                      ))}
-                    </div>
-                  )}
-                </ScrollArea>
-              )}
-            </PageTransition>
+            <CanvasNavigation.Provider value={canvasNavigation}>
+              <ReactFlowProvider>
+              <TunnelCanvas highlight={canvasMatch} onHighlightDone={clearCanvasMatch} detailsOpen={!!inspected || managedHostIds.has(selectedHost)}
+                onAddHost={(point) => openHostDiscovery(false, point)}
+                onUndoDelete={undoDelete}
+                hostPlacement={hostPlacement}
+                onHostsPlaced={() => setHostPlacement(null)}
+                data={data}
+                onEditPort={(rule, side) => {
+                  portFocus.current = (side === "local") === (rule.kind === "R") ? "target" : "bind";
+
+                  setRuleDraft(rule);
+                }}
+                onHostEdit={setHostDraft}
+                onHostAddForward={(id, kind) => setRuleDraft(hostForwardDraft(id, kind))}
+                onCreateServiceForward={createServiceForward}
+                onLinkForwardHost={linkForwardHost}
+                canAdd={!busy && bridge.desktop}
+                onStart={start}
+                onOpenService={(id, internalVnc) =>
+                  void action(() => bridge.openService(id, internalVnc))
+                }
+                onOpenProxyBrowser={(id, browser, serviceId) =>
+                  void action(() =>
+                    bridge.openProxyBrowser(id, browser, serviceId),
+                  )
+                }
+                onStop={stop}
+                onDetails={(rule) => setInspecting(rule.id)}
+                onCopy={copyRule}
+                onDelete={(rule) => setDeleting([rule])}
+                onEdit={(rule) => {
+
+                  setRuleDraft(rule);
+                }}
+                focusRuleId={focusRuleId}
+                onFocusDone={() => setFocusRuleId("")}
+              />
+              </ReactFlowProvider>
+            </CanvasNavigation.Provider>
+            {!hostDeletion && (
+              <HostDetails
+                data={{ ...data, hosts: managedHosts }}
+                busy={busy}
+                selected={selectedHost}
+                setSelected={setSelectedHost}
+                onTest={startHost}
+                onStopTest={(id) => void stop("host-test:" + id)}
+              />
+            )}
           </main>
           <div className="app-footnote">
             <GraphStarIcon size={13} />
             <span>{t("activeCount", { count: active })}</span>
             <span className="footnote-divider" />
-            <span>OriaTunnel</span>
+            <span>OriaSSH</span>
           </div>
           {!!data.diagnostics.length && (
             <div className="diagnostics overlay">
@@ -1033,6 +861,42 @@ export function App() {
             </div>
           )}
           <Toaster closeLabel={t("cancel")} />
+          {hostDeletion && (
+            <HostDeleteDialog
+              host={hostDeletion.host}
+              impact={hostDeletion.impact}
+              busy={busy}
+              canConfirm={!hostDeletion.stale}
+              close={() => {
+                if (!busy) setHostDeletion(null);
+              }}
+              error={hostDeletion.error ? formatNativeMessage(t(hostDeletion.error, {
+                ns: "files",
+                defaultValue: t(`error.${hostDeletion.error}`, { ns: "terminal", defaultValue: hostDeletion.error }),
+              })) : ""}
+              confirm={() => {
+                const { host, impact } = hostDeletion;
+                setHostDeletion({ ...hostDeletion, error: "" });
+                void action(() => bridge.deleteHost(host.id, impact, impact.active), (error) => {
+                  const key = nativeMessageKey(error);
+                  if (["hostUsedByFiles", "hostUsedByTerminal", "hostUsedByService"].includes(error) && !impact.active) {
+                    setHostDeletion({ ...hostDeletion, error: "", impact: { ...impact, active: true } });
+                  } else {
+                    setHostDeletion({
+                      ...hostDeletion,
+                      error,
+                      stale: key === "hostRulesChanged" || key === "hostServicesChanged",
+                    });
+                  }
+                }).then((ok) => {
+                  if (!ok) return;
+                  setAddedInSession((items) => items.filter((id) => id !== host.id));
+                  setSelectedHost((id) => (id === host.id ? "" : id));
+                  setHostDeletion(null);
+                });
+              }}
+            />
+          )}
           <AnimatePresence>
             {deleting && (
               <Modal
@@ -1068,10 +932,6 @@ export function App() {
                           : bridge.deleteRules(deleting.map((r) => r.id)),
                       ).then((ok) => {
                         if (ok) {
-                          const removed = new Set(deleting.map((r) => r.id));
-                          setSelectedRules((ids) =>
-                            ids.filter((id) => !removed.has(id)),
-                          );
                           setDeleting(null);
                         }
                       })
@@ -1082,76 +942,13 @@ export function App() {
                 </ModalActions>
               </Modal>
             )}
-            {deletingHost && (
-              <Modal
-                key="delete-host"
-                title={t("deleteHostTitle", { name: deletingHost.name })}
-                description={stopHostWork ? t("stopHostWorkHint") : undefined}
-                close={() => {
-                  if (!busy) setDeletingHost(null);
-                }}
-              >
-                {!!deletingHostRules.length && (
-                  <>
-                    <p className="muted">
-                      {t("deleteHostCascadeHint", { count: deletingHostRules.length })}
-                    </p>
-                    <ul className="delete-targets">
-                      {deletingHostRules.map((rule) => (
-                        <li key={rule.id}>{rule.name}</li>
-                      ))}
-                    </ul>
-                  </>
-                )}
-                {deleteHostError && <p className="inline-error" role="alert">{formatNativeMessage(
-                  t(deleteHostError, { ns: "files", defaultValue: t(`error.${deleteHostError}`, { ns: "terminal", defaultValue: deleteHostError }) }),
-                )}</p>}
-                <ModalActions>
-                  <Button
-                    variant="ghost"
-                    disabled={busy}
-                    onClick={() => setDeletingHost(null)}
-                  >
-                    {t("cancel")}
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    disabled={busy || stopHostWork === null}
-                    onClick={() => {
-                      const hostId = deletingHost.id;
-                      const ids = deletingHostRules.map((r) => r.id);
-                      setDeleteHostError("");
-                      void action(() => bridge.deleteHost(hostId, ids, stopHostWork === true), (error) => {
-                        if (["hostUsedByFiles", "hostUsedByTerminal", "hostUsedByService"].includes(error) && !stopHostWork)
-                          setStopHostWork(true);
-                        else setDeleteHostError(error);
-                      }).then(
-                        (ok) => {
-                          if (ok) {
-                            setAddedInSession((items) =>
-                              items.filter((id) => id !== hostId),
-                            );
-                            setSelectedRules((items) =>
-                              items.filter((id) => !ids.includes(id)),
-                            );
-                            setSelectedHost((id) => (id === hostId ? "" : id));
-                            setDeletingHost(null);
-                          }
-                        },
-                      );
-                    }}
-                  >
-                    {t(stopHostWork ? "stopAndDeleteHost" : "delete")}
-                  </Button>
-                </ModalActions>
-              </Modal>
-            )}
             {importing && (
               <ImportConfig
                 key="import"
                 previewFile={bridge.previewImport}
                 cancelPreview={bridge.cancelImport}
                 hosts={data.hosts}
+                addedHostIds={data.addedHostIds}
                 busy={busy}
                 close={() => {
                   if (!busy) {
@@ -1178,113 +975,48 @@ export function App() {
               />
             )}
             {settings && (
-              <Modal
+              <SettingsDialog
                 key="settings"
-                title={t("settings")}
-                close={() => setSettings(false)}
-                className="max-w-3xl sm:max-w-3xl"
+                data={data}
+                category={settings}
+                onCategoryChange={setSettings}
+                busy={busy}
+                close={() => setSettings(null)}
+                onSnapshot={accept}
+                runAction={action}
+                onImport={() => {
+                  setSettings(null);
+                  setImporting(true);
+                }}
+                onExport={(mode) => {
+                  setSettings(null);
+                  setExporting(mode);
+                }}
+              />
+            )}
+            {logHost && (
+              <Modal
+                title={data.hosts.find((host) => host.id === logHost)?.name || logHost}
+                close={() => setLogHost(null)}
+                className="activity-modal sm:max-w-3xl"
               >
-                <h3>{t("appearance")}</h3>
-                <AppearanceSettings />
-                <h3>{t("window")}</h3>
-                <WindowSettings />
-                <h3>VNC</h3>
-                <VncClientSetting
-                  desktop={bridge.desktop}
-                  onChooseDefault={() => action(bridge.chooseDefaultVnc)}
-                />
-                <h3>{t("discovery")}</h3>
-                <HostSourceSettings
-                  data={data}
-                  busy={busy || !bridge.desktop}
-                  save={(files, autoSync) =>
-                    action(() => bridge.setHostSources(files, autoSync))
-                  }
-                />
-                <h3>{t("trayAndStartup")}</h3>
-                <ItemGroup className="settings-section-panel themed-surface gap-0 divide-y divide-border-strong/15 overflow-hidden rounded-xl">
-                  <Item className="rounded-none border-0 px-3 py-2.5">
-                    <ItemContent className="min-w-0">
-                      <ItemTitle>
-                        <ParameterTitle
-                          label={t("closeToTray")}
-                          description={t("closeToTrayHint")}
-                          htmlFor="settings-close-to-tray"
-                        />
-                      </ItemTitle>
-                    </ItemContent>
-                    <ItemActions>
-                      <Switch
-                        id="settings-close-to-tray"
-                        checked={data.closeToTray}
-                        disabled={busy || !bridge.desktop}
-                        onCheckedChange={(checked) =>
-                          void action(() => bridge.setCloseToTray(checked))
-                        }
-                      />
-                    </ItemActions>
-                  </Item>
-                  <Item className="rounded-none border-0 px-3 py-2.5">
-                    <ItemContent className="min-w-0">
-                      <ItemTitle>
-                        <ParameterTitle
-                          label={t("autostart")}
-                          description={t("autostartHint")}
-                          htmlFor="settings-autostart"
-                        />
-                      </ItemTitle>
-                      {data.autostartError && (
-                        <ItemDescription
-                          className="line-clamp-none text-xs text-destructive"
-                          role="alert"
-                        >
-                          {data.autostartError}
-                        </ItemDescription>
-                      )}
-                    </ItemContent>
-                    <ItemActions>
-                      <Switch
-                        id="settings-autostart"
-                        checked={data.autostart}
-                        disabled={
-                          busy || !bridge.desktop || !data.autostartSupported
-                        }
-                        onCheckedChange={(checked) =>
-                          void action(() => bridge.setAutostart(checked))
-                        }
-                      />
-                    </ItemActions>
-                  </Item>
-                  <Item className="justify-end rounded-none border-0 px-3 py-2.5">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={!bridge.desktop}
-                      onClick={() => void action(bridge.quitApp)}
-                    >
-                      {t("quit")}
-                    </Button>
-                  </Item>
-                </ItemGroup>
+                <div className="activity-modal-timeline">
+                  <ActivityView data={data} scope={logHost} />
+                </div>
               </Modal>
             )}
             {inspected && (
               <Modal
                 key="runtime-details"
-                title={inspected.name}
+                title={inspectedName ? t("forwardDetailsTitle", { name: inspectedName }) : t("tunnels")}
                 close={() => setInspecting("")}
+                className="max-w-md sm:max-w-md"
               >
-                <OpenTerminalButton
-                  hostId={inspected.hostId}
-                  onOpen={() => setInspecting("")}
-                />
                 <RuntimeDetails
                   rule={inspected}
                   runtime={data.runtimes.find((r) => r.ruleId === inspected.id)}
-                  hostName={
-                    data.hosts.find((h) => h.id === inspected.hostId)?.name ||
-                    t("sourceMissing")
-                  }
+                  savedLogin={inspectedLogin}
+                  hostName={inspectedHost?.name || t("sourceMissing")}
                 />
               </Modal>
             )}
@@ -1302,46 +1034,28 @@ export function App() {
                   id="batch-auth-form"
                   onSubmit={(e) => {
                     e.preventDefault();
-                    const ids = batchAuth;
-                    const credentials = batchSecrets;
-                    const remember = rememberHostIds();
-                    for (const id of ids) {
-                      if (
-                        batchRouteHosts([id]).some(
-                          (host) =>
-                            host.authMethod === "auto" ||
-                            host.authMethod === "privateKey",
-                        )
-                      )
-                        automaticAttempts.current.set(id, {
-                          previousRunId: data.runtimes.find(
-                            (r) => r.ruleId === id,
-                          )?.runId,
-                        });
-                    }
-                    setBatchSecrets({});
-                    setBatchAuth(null);
-                    void action(async () =>
-                      notifyBatch(
-                        await bridge.startBatch(ids, credentials, remember),
-                        "start",
-                      ),
+                    const keys = batchHosts.map(credentialKey);
+                    runBatch(
+                      batchAuth,
+                      Object.fromEntries(keys.filter((key) => batchSecrets[key])
+                        .map((key) => [key, batchSecrets[key]])),
+                      keys.filter((key) => rememberPasswords[key]),
                     );
                   }}
                 >
                   {batchHosts.map((host) => (
                     <AuthenticationField
-                      key={host.id}
+                      key={credentialKey(host)}
                       host={host}
-                      value={batchSecrets[host.id] || ""}
+                      value={batchSecrets[credentialKey(host)] || ""}
                       onChange={(value) =>
-                        setBatchSecrets({ ...batchSecrets, [host.id]: value })
+                        setBatchSecrets({ ...batchSecrets, [credentialKey(host)]: value })
                       }
-                      remember={!!rememberPasswords[host.id]}
+                      remember={!!rememberPasswords[credentialKey(host)]}
                       onRemember={(value) =>
                         setRememberPasswords((old) => ({
                           ...old,
-                          [host.id]: value,
+                          [credentialKey(host)]: value,
                         }))
                       }
                     />
@@ -1363,19 +1077,24 @@ export function App() {
               <ConfigExportDialog
                 key="export"
                 data={data}
-                ruleIds={exporting}
-                close={() => setExporting(null)}
+                mode={exporting}
+                close={() => {
+                  setExporting(null);
+                  setSettings("configuration");
+                }}
               />
             )}
-            {ruleDraft && !ruleSuspended && (
+            {ruleDraft && (
               <Modal
                 key="rule-editor"
                 title={t(ruleDraft.id ? "editForward" : "add")}
                 close={() => setRuleDraft(null)}
+                disablePointerDismissal
               >
                 <RuleEditor
                   key={ruleDraft.id || "new"}
                   draft={ruleDraft}
+                  portFocus={portFocus}
                   hosts={managedHosts}
                   services={data.services}
                   selectedServiceIds={
@@ -1387,19 +1106,9 @@ export function App() {
                     setRuleServiceSelection({ draft: ruleDraft, ids })
                   }
                   busy={busy}
-                  reconnect={
-                    !!data.rules.find(
-                      (r) =>
-                        r.id === ruleDraft.id && networkChanged(r, ruleDraft),
-                    ) &&
-                    data.runtimes.some(
-                      (r) =>
-                        r.ruleId === ruleDraft.id &&
-                        !["failed", "stopped", "needs-attention"].includes(
-                          r.status,
-                        ),
-                    )
-                  }
+                  savedRule={savedEditingRule}
+                  activeRule={editingRuntime ? savedEditingRule : undefined}
+                  reconnect={!!editingRuntime?.configurationChanged}
                   onChange={(next) => {
                     if (ruleServiceSelection?.draft === ruleDraft)
                       setRuleServiceSelection({
@@ -1410,14 +1119,6 @@ export function App() {
                   }}
                   onCancel={() => setRuleDraft(null)}
                   onAddHost={() => openHostDiscovery(true)}
-                  onManageServices={() => {
-                    setRuleSuspended(true);
-                    setPage("services");
-                  }}
-                  onManageHosts={() => {
-                    setRuleSuspended(true);
-                    setPage("hosts");
-                  }}
                   onSave={(launch, links) => void saveDraft(launch, links)}
                 />
               </Modal>
@@ -1440,7 +1141,7 @@ export function App() {
                 refresh={() => void refresh()}
                 manual={() => {
                   setDiscovering(false);
-                  setHostDraft(emptyHost());
+                  setHostDraft({ ...emptyHost(), credentialOnly: true });
                 }}
                 select={async (ids) => {
                   if (!ids.length || busy) return;
@@ -1453,10 +1154,7 @@ export function App() {
                     setRuleDraft(
                       (current) => current && { ...current, hostId: ids[0] },
                     );
-                  else {
-                    setPage("hosts");
-                    setSelectedHost("");
-                  }
+                  else setHostPlacement({ ids, origin: newHostOrigin.current });
                   setDiscovering(false);
                   setHostFromRule(false);
                 }}
@@ -1465,178 +1163,27 @@ export function App() {
             {hostDraft && (
               <Modal
                 key="host-editor"
-                title={hostDraft.id ? t("edit") : t("newHost")}
+                title={t(hostDraft.id ? "editSshHost" : "newHost")}
                 close={closeHost}
+                disablePointerDismissal
               >
                 <form
                   id="host-editor-form"
+                  className="host-editor-form"
+                  aria-label={t(hostDraft.id ? "editSshHost" : "newHost")}
                   onSubmit={(e) => {
                     e.preventDefault();
                     void saveHostDraft(false);
                   }}
                 >
-                  <Field label={t("name")}>
-                    <Input
-                      required
-                      value={hostDraft.name}
-                      onChange={(e) =>
-                        setHostDraft({ ...hostDraft, name: e.target.value })
-                      }
-                    />
-                  </Field>
-                  <Field label={t("address")}>
-                    <Input
-                      required
-                      disabled={hostDraft.source === "config"}
-                      value={hostDraft.address}
-                      onChange={(e) =>
-                        setHostDraft({ ...hostDraft, address: e.target.value })
-                      }
-                    />
-                  </Field>
-                  <fieldset disabled={hostDraft.source === "config"}>
-                    <div className="form-grid">
-                      <Field label={t("port")}>
-                        <Input
-                          type="number"
-                          min={1}
-                          max={65535}
-                          required
-                          value={hostDraft.port}
-                          onChange={(e) =>
-                            setHostDraft({
-                              ...hostDraft,
-                              port: Number(e.target.value),
-                            })
-                          }
-                        />
-                      </Field>
-                      <Field label={t("user")}>
-                        <Input
-                          required
-                          value={hostDraft.user}
-                          onChange={(e) =>
-                            setHostDraft({ ...hostDraft, user: e.target.value })
-                          }
-                        />
-                      </Field>
-                    </div>
-                    <IdentityFilesEditor
-                      value={hostDraft.identityFiles}
-                      disabled={busy || hostDraft.source === "config"}
-                      pickFile={
-                        bridge.desktop ? bridge.pickIdentityFile : undefined
-                      }
-                      onChange={(identityFiles) =>
-                        setHostDraft(
-                          (current) => current && { ...current, identityFiles },
-                        )
-                      }
-                    />
-                    <Field label={t("authMethod")}>
-                      <Select
-                        items={[
-                          { value: "auto", label: t("authAuto") },
-                          { value: "password", label: t("authPassword") },
-                          { value: "privateKey", label: t("authPrivateKey") },
-                          { value: "agent", label: t("authAgent") },
-                        ]}
-                        value={
-                          hostDraft.source === "config"
-                            ? hostAuthMethod(hostDraft)
-                            : hostDraft.authMethod
-                        }
-                        onValueChange={(authMethod) =>
-                          authMethod &&
-                          setHostDraft({
-                            ...hostDraft,
-                            authMethod: authMethod as Host["authMethod"],
-                          })
-                        }
-                      >
-                        <SelectTrigger className="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent alignItemWithTrigger={false}>
-                          <SelectItem value="auto">{t("authAuto")}</SelectItem>
-                          <SelectItem value="password">
-                            {t("authPassword")}
-                          </SelectItem>
-                          <SelectItem value="privateKey">
-                            {t("authPrivateKey")}
-                          </SelectItem>
-                          <SelectItem
-                            value="agent"
-                            disabled={!data.agentSupported}
-                          >
-                            {t("authAgent")}
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </Field>
-                    <details className="advanced-fields">
-                      <summary>{t("advanced")}</summary>
-                      <div className="advanced-content">
-                        <ConnectionFields
-                          value={hostDraft.connection}
-                          onChange={(connection) =>
-                            setHostDraft({ ...hostDraft, connection })
-                          }
-                        />
-                        <div
-                          className="field"
-                          role="group"
-                          aria-label={t("proxyJump")}
-                        >
-                          <JumpRouteEditor
-                            hosts={managedHosts}
-                            hostId={hostDraft.id}
-                            value={hostDraft.proxyJump}
-                            disabled={busy || hostDraft.source === "config"}
-                            onChange={(proxyJump) =>
-                              setHostDraft({ ...hostDraft, proxyJump })
-                            }
-                          />
-                        </div>
-                        <ParameterField
-                          label={t("identityAgentTitle")}
-                          parameter="-o IdentityAgent"
-                          description={t("identityAgentHint")}
-                        >
-                          <Input
-                            value={hostDraft.identityAgent || ""}
-                            placeholder={t("systemDefault")}
-                            onChange={(e) =>
-                              setHostDraft({
-                                ...hostDraft,
-                                identityAgent: e.target.value || null,
-                              })
-                            }
-                          />
-                        </ParameterField>
-                        <ParameterSwitch
-                          label={t("identitiesOnlyTitle")}
-                          parameter="-o IdentitiesOnly"
-                          description={t("identitiesOnlyHint")}
-                          checked={hostDraft.identitiesOnly}
-                          onCheckedChange={(checked) =>
-                            setHostDraft({
-                              ...hostDraft,
-                              identitiesOnly: checked,
-                            })
-                          }
-                        />
-                      </div>
-                    </details>
-                  </fieldset>
-                  <HostTags
+                  <HostEditorFields
+                    host={hostDraft}
                     hosts={managedHosts}
-                    value={hostDraft.tags}
-                    onChange={(tags) => setHostDraft({ ...hostDraft, tags })}
+                    credentials={data.loginCredentials ?? []}
+                    busy={busy}
+                    change={(patch) => setHostDraft((draft) => draft && { ...draft, ...patch })}
+                    manageCredentials={() => setManagingHostCredentials(true)}
                   />
-                  {hostDraft.source === "config" && (
-                    <p className="muted">{t("metadataHint")}</p>
-                  )}
                   {duplicateHost && (
                     <div className="path-preview">
                       <p className="muted">
@@ -1668,7 +1215,7 @@ export function App() {
                       type="submit"
                       form="host-editor-form"
                       variant="primary-soft"
-                      disabled={busy}
+                      disabled={busy || hostNeedsCredential}
                       onClick={(e) => {
                         if (e.currentTarget.form?.reportValidity()) {
                           e.preventDefault();
@@ -1681,12 +1228,44 @@ export function App() {
                     <Button
                       type="submit"
                       form="host-editor-form"
-                      disabled={busy}
+                      disabled={busy || hostNeedsCredential}
                     >
                       {t("save")}
                     </Button>
                   </ModalActions>
                 </form>
+                {managingHostCredentials && (
+                  <CredentialManager
+                    data={data}
+                    close={() => setManagingHostCredentials(false)}
+                    onSnapshot={(snapshot) => {
+                      accept(snapshot);
+                      setHostDraft((draft) => {
+                        if (!draft) return draft;
+                        const catalog = new Set(snapshot.loginCredentials?.map(({ id }) => id));
+                        const credentialIds = draft.credentialIds?.filter((id) => catalog.has(id));
+                        const defaultRemoved = draft.defaultLoginId &&
+                          draft.credentialIds?.includes(draft.defaultLoginId) &&
+                          !credentialIds?.includes(draft.defaultLoginId);
+                        const saved = snapshot.hosts.find((host) => host.id === draft.id);
+                        return {
+                          ...draft,
+                          credentialIds,
+                          defaultLoginId: defaultRemoved
+                            ? (draft.credentialOnly ? credentialIds?.[0] ?? null : null)
+                            : draft.defaultLoginId,
+                          ...(saved && {
+                            user: saved.user,
+                            authMethod: saved.authMethod,
+                            primaryLoginLabel: saved.primaryLoginLabel,
+                            identityFiles: saved.identityFiles,
+                            logins: saved.logins?.filter(({ id }) => !saved.credentialIds?.includes(id)),
+                          }),
+                        };
+                      });
+                    }}
+                  />
+                )}
               </Modal>
             )}
             {authId && (
@@ -1698,7 +1277,10 @@ export function App() {
                     ? t("authForHost", { name: authTarget.name })
                     : t("auth")
                 }
-                description={t(authFallback ? "authFallbackHelp" : "authHelp")}
+                description={t(authFallback
+                  ? authPromptHosts.length && authPromptHosts.every((host) => host.authMethod === "password")
+                    ? "passwordRetryHint" : "authFallbackHelp"
+                  : "authHelp")}
                 close={() => {
                   setAuthId(null);
                   setSecret("");
@@ -1711,17 +1293,14 @@ export function App() {
                     e.preventDefault();
                     const id = authId;
                     const once = secret;
-                    const jumps = jumpSecrets;
-                    const remember = rememberHostIds();
-                    if (
-                      !authFallback &&
-                      authTarget &&
-                      [...jumpHosts(data.hosts, authTarget), authTarget].some(
-                        (host) =>
-                          host.authMethod === "auto" ||
-                          host.authMethod === "privateKey",
-                      )
-                    ) {
+                    const hops = authPromptHosts.filter((host) => host.id !== authTarget?.id);
+                    const jumps = Object.fromEntries(hops.map((host) =>
+                      [host.id, jumpSecrets[credentialKey(host)] ?? ""],
+                    ));
+                    const remember = authPromptHosts
+                      .filter((host) => rememberPasswords[credentialKey(host)])
+                      .map((host) => host.id);
+                    if (authTarget) {
                       automaticAttempts.current.set(id, {
                         previousRunId: data.runtimes.find(
                           (r) => r.ruleId === id,
@@ -1734,26 +1313,28 @@ export function App() {
                     setAuthId(null);
                     void action(() =>
                       authHostId
-                        ? bridge.testHost(authHostId, once, jumps, remember)
-                        : bridge.startRule(id, once, jumps, remember),
-                    );
+                        ? bridge.testHost(authHostId, once, jumps, remember, authLogin)
+                        : bridge.startRule(id, once, jumps, remember, authLogin),
+                    ).then((ok) => {
+                      if (!ok) automaticAttempts.current.delete(id);
+                    });
                   }}
                 >
                   {authPromptHosts
                     .filter((host) => host.id !== authTarget?.id)
                     .map((h) => (
                       <AuthenticationField
-                        key={h.id}
+                        key={credentialKey(h)}
                         host={h}
-                        value={jumpSecrets[h.id] || ""}
+                        value={jumpSecrets[credentialKey(h)] || ""}
                         onChange={(value) =>
-                          setJumpSecrets({ ...jumpSecrets, [h.id]: value })
+                          setJumpSecrets({ ...jumpSecrets, [credentialKey(h)]: value })
                         }
-                        remember={!!rememberPasswords[h.id]}
+                        remember={!!rememberPasswords[credentialKey(h)]}
                         onRemember={(value) =>
                           setRememberPasswords((old) => ({
                             ...old,
-                            [h.id]: value,
+                            [credentialKey(h)]: value,
                           }))
                         }
                       />
@@ -1762,14 +1343,14 @@ export function App() {
                   authPromptHosts.some((host) => host.id === authTarget.id) ? (
                     <AuthenticationField
                       host={authTarget}
-                      hideLabel
+                      labelContext="account"
                       value={secret}
                       onChange={setSecret}
-                      remember={!!rememberPasswords[authTarget.id]}
+                      remember={!!rememberPasswords[credentialKey(authTarget)]}
                       onRemember={(value) =>
                         setRememberPasswords((old) => ({
                           ...old,
-                          [authTarget.id]: value,
+                          [credentialKey(authTarget)]: value,
                         }))
                       }
                       actions={
@@ -1849,7 +1430,7 @@ export function App() {
   );
 }
 
-function RunButton({
+function ForwardRunButton({
   runtime,
   start,
   stop,
@@ -1862,385 +1443,156 @@ function RunButton({
   const active =
     runtime &&
     !["stopped", "failed", "needs-attention"].includes(runtime.status);
+  const label = t(active ? "stop" : "forwardAction");
   return (
     <Button
       className="nodrag nopan"
       variant={active ? "destructive" : "primary-soft"}
       size="sm"
       onClick={active ? stop : start}
-      aria-label={t(active ? "stop" : "start")}
+      aria-label={label}
     >
-      {active ? <SquareIcon size={14} /> : <PlayIcon size={14} />}{" "}
-      {t(active ? "stop" : "start")}
+      {active ? <SquareIcon size={14} /> : <PlayIcon size={14} />}
+      {label}
     </Button>
   );
 }
-function Hosts({
+function HostDetails({
   data,
   busy,
   selected,
   setSelected,
-  onEdit,
-  onAdd,
-  onForward,
-  onDelete,
-  onCopy,
   onTest,
   onStopTest,
-  onUndo,
 }: {
   data: Snapshot;
   busy: boolean;
   selected: string;
   setSelected: (s: string) => void;
-  onEdit: (h: Host) => void;
-  onAdd: () => void;
-  onForward: (id: string) => void;
   onTest: (id: string) => void;
-  onUndo: () => void;
   onStopTest: (id: string) => void;
-  onDelete: (h: Host) => void;
-  onCopy: (h: Host) => void;
 }) {
   const { t } = useTranslation("tunnel");
-  const [query, setQuery] = useState(""),
-    [filter, setFilter] = useState("all");
-  const [grouping, setGrouping] = useState<HostGrouping>("tags");
-  const list = data.hosts.filter(
-    (h) =>
-      (filter === "all" ||
-        (filter === "errors"
-          ? hostFilterStatus(
-              h,
-              data.runtimes.find(
-                (runtime) => runtime.ruleId === `host-test:${h.id}`,
-              ),
-            )?.startsWith("status-")
-          : hostFilterStatus(
-              h,
-              data.runtimes.find(
-                (runtime) => runtime.ruleId === `host-test:${h.id}`,
-              ),
-            ) === filter)) &&
-      `${h.name} ${h.address} ${h.port} ${h.user} ${h.tags.join(" ")}`
-        .toLowerCase()
-        .includes(query.toLowerCase()),
-  );
-  const host = data.hosts.find((h) => h.id === selected);
-  const hostReferences = (h: Host) =>
-    data.rules.filter(
-      (r) =>
-        r.hostId === h.id ||
-        jumpHosts(
-          data.hosts,
-          data.hosts.find((h) => h.id === r.hostId),
-        ).some((jump) => jump.id === h.id),
-    );
-  const references = host ? hostReferences(host) : [];
-  const testRuntime = data.runtimes.find(
-    (r) => r.ruleId === "host-test:" + host?.id,
-  );
+  const savedHost = data.hosts.find((item) => item.id === selected);
+  const host = resolvedDefaultLogin(savedHost) ?? savedHost;
+  const testRuntime = data.runtimes.find((runtime) => runtime.ruleId === "host-test:" + selected);
+  const fieldSources = Object.entries(host?.fieldSources ?? {});
+
   return (
-    <ScrollArea
-      className="page-scroll-area"
-      viewportClassName="page hosts-page scroll-fade"
-    >
-      <header className="hosts-page-heading">
-        <h1>{t("hosts")}</h1>
-        <span aria-live="polite">{t("hostCount", { count: list.length })}</span>
-      </header>
-      <HostToolbar
-        undoCount={data.hostUndoCount}
-        undoDisabled={busy || !bridge.desktop}
-        onUndo={onUndo}
-        query={query}
-        filter={filter}
-        grouping={grouping}
-        onQuery={setQuery}
-        onFilter={setFilter}
-        onGrouping={setGrouping}
-      />
-      {!list.length ? (
-        <PageEmptyState
-          className="min-h-70"
-          icon={<ServerIcon />}
-          title={t(data.hosts.length ? "emptyResult" : "noHosts")}
-          description={!data.hosts.length && t("noHostsBody")}
-          action={
-            !data.hosts.length && (
-              <Button
-                type="button"
-                variant="primary-soft"
-                disabled={busy || !bridge.desktop}
-                onClick={onAdd}
-              >
-                <ServerPlusIcon aria-hidden="true" />
-                {t("addHost")}
-              </Button>
-            )
-          }
-        />
-      ) : (
-        <HostGroups
-          hosts={list}
-          runtimes={data.runtimes}
-          grouping={grouping}
-          selected={host?.id}
-          actions={(h, runtime) => {
-            const testing =
-              !!runtime &&
-              !["tested", "failed", "stopped", "needs-attention"].includes(
-                runtime.status,
-              );
-            const usedAsJump = data.hosts.some(
-              (other) =>
-                other.id !== h.id &&
-                jumpHosts(data.hosts, other).some((jump) => jump.id === h.id),
-            );
-            const disabled = busy || !bridge.desktop;
-            return (
-              <>
-                <Button
-                  size="icon-sm"
-                  variant="ghost"
-                  aria-label={`${t("details")} ${h.name}`}
-                  aria-haspopup="dialog"
-                  title={t("details")}
-                  onClick={() => setSelected(h.id)}
-                >
-                  <InfoIcon />
-                </Button>
-                <Button
-                  size="icon-sm"
-                  variant="ghost"
-                  disabled={disabled}
-                  aria-label={`${t("edit")} ${h.name}`}
-                  title={t("edit")}
-                  onClick={() => onEdit(h)}
-                >
-                  <Settings2Icon />
-                </Button>
-                <Button
-                  size="icon-sm"
-                  variant="ghost"
-                  disabled={disabled}
-                  aria-label={`${t("copyHost")} ${h.name}`}
-                  aria-haspopup="dialog"
-                  title={t("copyHost")}
-                  onClick={() => onCopy(h)}
-                >
-                  <CopyPlusIcon />
-                </Button>
-                <OpenFilesButton hostId={h.id}/><OpenTerminalButton hostId={h.id} />
-                <Button
-                  size="icon-sm"
-                  variant="ghost"
-                  className="text-destructive hover:bg-destructive/10 hover:text-destructive dark:hover:bg-destructive/20 focus-visible:border-destructive/40 focus-visible:ring-destructive/20"
-                  disabled={disabled || usedAsJump || testing}
-                  aria-label={`${t("delete")} ${h.name}`}
-                  title={t(usedAsJump ? "hostUsedAsJump" : "delete")}
-                  onClick={() => onDelete(h)}
-                >
-                  <Trash2Icon />
-                </Button>
-                <HostTestButton
-                  hostName={h.name}
-                  runtime={runtime}
-                  disabled={disabled || (!!h.diagnostics.length && !testing)}
-                  onTest={() => onTest(h.id)}
-                  onStop={() => onStopTest(h.id)}
-                />
-              </>
-            );
-          }}
-        />
-      )}
-      <AnimatePresence>
-        {host && (
-          <Modal key={host.id} title={host.name} close={() => setSelected("")}>
-            <div className="host-detail">
-              <OpenTerminalButton
-                hostId={host.id}
-                onOpen={() => setSelected("")}
-              />
-              <ServiceCommandsButton hostId={host.id} />
-              <div className="host-detail-badges">
-                <span className="source-badge">
-                  {t(hostAuthLabels[hostAuthMethod(host, testRuntime)])}
-                </span>
-                {testRuntime ? (
-                  <Status runtime={testRuntime} />
-                ) : (
-                  <span className="status">
-                    <i />
-                    {t("untested")}
-                  </span>
+    <AnimatePresence>
+      {host && (
+        <Modal key={host.id} title={host.name} close={() => setSelected("")}
+          className="max-w-md sm:max-w-md">
+          <div className="host-detail">
+            <section className="host-detail-section">
+              <div className="host-detail-heading">
+                <h3>{t("connectionInfo")}</h3>
+                {testRuntime ? <Status runtime={testRuntime} /> : (
+                  <span className="status"><i aria-hidden="true" />{t("untested")}</span>
                 )}
               </div>
+              <dl className="detail-facts host-connection-facts">
+                <div><dt>{t("address")}</dt><dd><code>{endpoint(host.address, host.port)}</code></dd></div>
+                <div><dt>{t("user")}</dt><dd>{host.user}</dd></div>
+                <div>
+                  <dt>{t("authMethod")}</dt>
+                  <dd>{t(hostAuthLabels[hostAuthMethod(host, testRuntime)])}</dd>
+                </div>
+                <div>
+                  <dt>{t("proxyJump")}</dt>
+                  <dd>{jumpHosts(data.hosts, host).map((jump) => jump.name).join(" → ") ||
+                    host.proxyJump || t("directConnection")}</dd>
+                </div>
+                {!!host.tags.length && <div><dt>{t("tags")}</dt><dd>{host.tags.join(", ")}</dd></div>}
+              </dl>
               {testRuntime?.message && (
-                <p
-                  className={
-                    testRuntime.status === "tested"
-                      ? "host-test-success"
-                      : "inline-error"
-                  }
-                >
+                <p className={testRuntime.status === "tested" ? "host-test-success" : "inline-error"}>
                   {formatNativeMessage(testRuntime.message)}
                 </p>
               )}
-              <dl>
-                <dt>{t("address")}</dt>
-                <dd>
-                  {host.address}:{host.port}
-                </dd>
-                <dt>{t("user")}</dt>
-                <dd>{host.user}</dd>
-                <dt>{t("authMethod")}</dt>
-                <dd>{t(hostAuthLabels[hostAuthMethod(host, testRuntime)])}</dd>
-                <dt>{t("proxyJump")}</dt>
-                <dd>
-                  {jumpHosts(data.hosts, host)
-                    .map((h) => h.name)
-                    .join(" → ") ||
-                    host.proxyJump ||
-                    t("directConnection")}
-                </dd>
-                <dt>{t("identityAgentTitle")}</dt>
-                <dd>{host.identityAgent || t("systemDefault")}</dd>
-                <dt>{t("tags")}</dt>
-                <dd>{host.tags.join(", ") || "—"}</dd>
-                <dt>{t("connectTimeout")}</dt>
-                <dd>{host.connection.connectTimeoutSecs}</dd>
-                <dt>{t("keepaliveInterval")}</dt>
-                <dd>{host.connection.keepaliveIntervalSecs}</dd>
-                <dt>{t("keepaliveMax")}</dt>
-                <dd>{host.connection.keepaliveMax}</dd>
-                <dt>{t("identity")}</dt>
-                <dd>{host.identityFiles.join("\n") || "—"}</dd>
-                {host.sourceFile && (
-                  <>
-                    <dt>{t("source")}</dt>
-                    <dd>{host.sourceFile}</dd>
-                  </>
+            </section>
+            {host.sourceFile && (
+              <section className="host-detail-section">
+                <h3>{t("source")}</h3>
+                <code className="host-detail-source">{host.sourceFile}</code>
+              </section>
+            )}
+            <details className="host-detail-disclosure">
+              <summary>{t("advanced")}</summary>
+              <dl className="detail-facts host-connection-facts">
+                <div><dt>{t("identityAgentTitle")}</dt><dd>{host.identityAgent || t("systemDefault")}</dd></div>
+                <div><dt>{t("connectTimeout")}</dt><dd>{host.connection.connectTimeoutSecs}</dd></div>
+                <div><dt>{t("keepaliveInterval")}</dt><dd>{host.connection.keepaliveIntervalSecs}</dd></div>
+                <div><dt>{t("keepaliveMax")}</dt><dd>{host.connection.keepaliveMax}</dd></div>
+                {!!host.identityFiles.length && (
+                  <div className="host-detail-key-paths">
+                    <dt>{t("identity")}</dt><dd>{host.identityFiles.join("\n")}</dd>
+                  </div>
                 )}
               </dl>
-              {!!Object.keys(host.fieldSources || {}).length && (
-                <details className="advanced-fields">
-                  <summary>{t("fieldSources")}</summary>
-                  <dl>
-                    {Object.entries(host.fieldSources || {}).map(
-                      ([field, source]) => (
-                        <div key={field}>
-                          <dt>{field}</dt>
-                          <dd>{source}</dd>
-                        </div>
-                      ),
-                    )}
-                  </dl>
-                </details>
-              )}
-              {!!host.configuredForwards?.length && (
-                <details className="advanced-fields">
-                  <summary>{t("sourceForwards")}</summary>
-                  <p className="muted">{t("sourceForwardsHint")}</p>
-                  {host.configuredForwards.map((forward, index) => (
-                    <p key={index} className="muted">
-                      {forward}
-                    </p>
+            </details>
+            {!!fieldSources.length && (
+              <details className="host-detail-disclosure">
+                <summary>{t("fieldSources")}</summary>
+                <dl className="detail-facts host-connection-facts">
+                  {fieldSources.map(([field, source]) => (
+                    <div key={field}><dt>{field}</dt><dd>{source}</dd></div>
                   ))}
-                </details>
-              )}
-              {host.source === "config" && (
-                <p className="muted">{t("sourceHint")}</p>
-              )}
-              {!!host.unsupportedSessionOptions?.length && (
-                <p className="muted">
-                  {t("sessionOptionsHint", {
-                    options: host.unsupportedSessionOptions.join(", "),
-                  })}
-                </p>
-              )}
-              {host.diagnostics.map((d, i) => (
-                <p className="inline-error" key={i}>
-                  {formatNativeMessage(d)}
-                </p>
-              ))}
-              {!!references.length && (
-                <p className="muted">
-                  {t("deleteHostHint")}{" "}
-                  {references.map((r) => r.name).join("、")}
-                </p>
-              )}
-              <div className="host-detail-actions">
-                {host.source === "config" && (
-                  <Button
-                    variant="ghost"
-                    disabled={
-                      busy ||
-                      !bridge.desktop ||
-                      host.diagnostics.some(
-                        (d) => nativeMessageKey(d) !== "hostSourceLost",
-                      )
-                    }
-                    onClick={() => onCopy(host)}
-                  >
-                    {t("copyHost")}
-                  </Button>
-                )}
-                <Button
-                  disabled={
-                    busy || !bridge.desktop || !!host.diagnostics.length
-                  }
-                  onClick={() => {
-                    onForward(host.id);
-                    setSelected("");
-                  }}
-                >
-                  <GitPullRequestCreateArrowIcon />
-                  {t("createForward")}
-                </Button>
-              </div>
-            </div>
-          </Modal>
-        )}
-      </AnimatePresence>
-    </ScrollArea>
+                </dl>
+              </details>
+            )}
+            {!!host.configuredForwards?.length && (
+              <details className="host-detail-disclosure">
+                <summary>{t("sourceForwards")}</summary>
+                <ul className="host-detail-source">
+                  {host.configuredForwards.map((forward, index) => <li key={index}><code>{forward}</code></li>)}
+                </ul>
+              </details>
+            )}
+            {!!host.unsupportedSessionOptions?.length && (
+              <p className="muted">
+                {t("sessionOptionsHint", { options: host.unsupportedSessionOptions.join(", ") })}
+              </p>
+            )}
+            {host.diagnostics.map((message, index) => (
+              <p className="inline-error" key={index}>{formatNativeMessage(message)}</p>
+            ))}
+          </div>
+          <ModalActions>
+            <HostTestButton hostName={host.name} runtime={testRuntime}
+              disabled={busy || !bridge.desktop || !!host.diagnostics.length}
+              onTest={() => onTest(host.id)} onStop={() => onStopTest(host.id)} />
+          </ModalActions>
+        </Modal>
+      )}
+    </AnimatePresence>
   );
 }
 
 type CardData = {
-  onHostEdit: (host: Host) => void;
-  onHostAddForward: (id: string) => void;
-  onOpenProxyBrowser: (
-    id: string,
-    browser: bridge.ProxyBrowser,
-    serviceId?: string,
-  ) => void;
-  onAdd: (placement: PortPlacement) => void;
-  canAdd: boolean;
+  listeningPorts?: string[];
+  runtimes?: CardRuntime[];
   onOpenService: (id: string, internalVnc?: boolean) => void;
+  onHostEdit: (host: Host) => void;
+  onHostAddForward: (id: string, kind: "R" | "D") => void;
+  onOpenProxyBrowser: (id: string, browser: bridge.ProxyBrowser, serviceId?: string) => void;
+  canAdd: boolean;
   onPortMove: (
     id: string,
     value: PortPlacement | null,
     commit: boolean,
   ) => void;
-  onDetails: (rule: Rule) => void;
-  onCopy: (rule: Rule) => void;
-  onDelete: (rule: Rule) => void;
   local: boolean;
   ports: CardPort[];
   rules?: Rule[];
   host?: Host;
-  runtimes?: CardRuntime[];
   services?: Snapshot["services"];
   count?: number;
-  onStart: (id: string) => void;
-  onStop: (id: string) => unknown;
-  onEdit: (rule: Rule) => void;
 };
 type CardNode = Node<CardData, "card">;
 type CardPort = {
   custom?: PortPlacement;
+  serviceId?: string;
   ruleId: string;
   side: Position;
   type: "source" | "target";
@@ -2250,43 +1602,49 @@ type CardPort = {
 };
 function CardPorts({
   ports,
-  local = false,
+  listeningPorts,
+  localOffsets,
   labels = true,
   onMove,
   onDragChange,
 }: {
   ports: CardPort[];
-  local?: boolean;
+  listeningPorts: ReadonlySet<string>;
+  localOffsets?: number[];
   labels?: boolean;
   onMove?: CardData["onPortMove"];
   onDragChange?: (dragging: boolean) => void;
 }) {
-  return ports.map((port) => {
-    const peers = ports.filter((item) => item.side === port.side);
-    const index = peers.indexOf(port);
-    if (local && onMove && onDragChange)
+  return ports.map((port, portIndex) => {
+    if (localOffsets && onMove && onDragChange)
       return (
         <LocalPortHandle
           key={port.ruleId}
           port={port}
-          offset={port.custom?.offset ?? (index + 1) / (peers.length + 1)}
+          listening={listeningPorts.has(port.ruleId)}
+          offset={localOffsets[portIndex]}
           onChange={onMove}
           onDragChange={onDragChange}
         />
       );
+    const peers = ports.filter((item) => item.side === port.side);
+    const index = peers.indexOf(port);
     const horizontal =
       port.side === Position.Top || port.side === Position.Bottom;
     const offset = `${((index + 1) / (peers.length + 1)) * 100}%`;
     const placement: CSSProperties = horizontal
       ? { left: offset }
-      : { top: local ? offset : "50%" };
+      : { top: offset };
     return (
-      <Handle
+      <ConnectionPort
         key={port.ruleId}
         id={canvasPortId(port.ruleId, port.type)}
         type={port.type}
         position={port.side}
-        className="connection-port"
+        className="connection-port nodrag nopan nokey"
+        listening={listeningPorts.has(port.ruleId)}
+        data-rule-endpoint={port.ruleId}
+        aria-label={`${port.name} · ${port.label}`} aria-haspopup="dialog" role="button" tabIndex={0}
         title={`${port.name} · ${port.label}`}
         style={
           {
@@ -2296,53 +1654,57 @@ function CardPorts({
         }
       >
         {labels && <span className="connection-port-label">{port.label}</span>}
-      </Handle>
+      </ConnectionPort>
     );
   });
 }
-function Card({ id, data: d, dragging }: NodeProps<CardNode>) {
-  return <CardContent id={id} data={d} dragging={d.local && dragging} />;
+function Card({ id, data: d }: NodeProps<CardNode>) {
+  return <CardContent id={id} data={d} />;
 }
 // React Flow updates node coordinates on every pointer move. Only these props
 // affect the card contents; moving a host must not rebuild all of its menus.
 const CardContent = memo(function CardContent({
   id,
   data: d,
-  dragging,
-}: Pick<NodeProps<CardNode>, "id" | "data" | "dragging">) {
+}: Pick<NodeProps<CardNode>, "id" | "data">) {
   const { t } = useTranslation("tunnel");
+  const nav = useContext(CanvasNavigation);
+  const listeningPorts = useMemo(() => new Set(d.listeningPorts), [d.listeningPorts]);
+  const hostUser = resolvedDefaultLogin(d.host)?.user ?? d.host?.user;
   // Opacity only: transforms belong to React Flow and port measurement.
   const entrance = useEntranceMotion(0);
   const updateInternals = useUpdateNodeInternals();
-  const cardRef = useRef<HTMLElement>(null);
   const [portDragSize, setPortDragSize] = useState<ReturnType<
     typeof localCardSize
   > | null>(null);
   const portLayout = d.ports
     .map(
       (port) =>
-        `${port.ruleId}:${port.type}:${port.side}:${port.custom?.offset ?? "auto"}`,
+        `${port.ruleId}:${port.type}:${port.side}:${port.serviceId ?? ""}:${port.custom?.offset ?? "auto"}`,
     )
     .join("|");
+  const idealSize = localCardSize(d.ports);
+  const localSize = portDragSize ? {
+    width: Math.max(portDragSize.width, idealSize.width),
+    height: Math.max(portDragSize.height, idealSize.height),
+  } : idealSize;
   useLayoutEffect(() => {
     updateInternals(id);
-  }, [id, portLayout, updateInternals]);
-  const localSize = portDragSize || localCardSize(d.ports);
+  }, [id, portLayout, localSize.width, localSize.height, d.services, d.rules, updateInternals]);
   if (d.local)
     return (
       <motion.article
-        ref={cardRef}
         className="tunnel-card themed-surface local-card"
         {...entrance}
         style={localSize}
         aria-label={`${t("local")} · ${t("forwardCount", { count: d.count || 0 })}`}
       >
-        <CardPorts
+        <CardPorts listeningPorts={listeningPorts}
           ports={d.ports}
-          local
+          localOffsets={localPortOffsets(d.ports, localSize)}
           onMove={d.onPortMove}
           onDragChange={(dragging) =>
-            setPortDragSize(dragging ? localCardSize(d.ports) : null)
+            setPortDragSize(dragging ? idealSize : null)
           }
         />
         <div className="local-computer" aria-hidden="true">
@@ -2350,22 +1712,36 @@ const CardContent = memo(function CardContent({
           <strong>{d.count || 0}</strong>
         </div>
         <FileTransferPorts /><FileTransferStatus nodeId="local" className="files-local-status" />
-        <span className="local-card-title">{t("local")}</span>
-        <LocalAddForward
-          card={cardRef}
-          size={localSize}
-          disabled={!d.canAdd}
-          suspended={!!dragging || !!portDragSize}
-          onAdd={d.onAdd}
-        />
+        <div className="local-card-heading">
+          <span className="local-card-title">{t("local")}</span>
+        </div>
+        <CardEdge source={{ type: "local" }} disabled={!d.canAdd} />
       </motion.article>
     );
+  const renderPorts = (rules: Rule[]) => {
+    const ids = new Set(rules.map(rule => rule.id));
+    const ports = d.ports.filter(port => ids.has(port.ruleId) &&
+      (port.side === Position.Left || port.side === Position.Right));
+    if (!ports.length) return null;
+    const leftCount = ports.filter(port => port.side === Position.Left).length;
+    const slots = Math.max(leftCount, ports.length - leftCount);
+    return <div className="canvas-port-rail" style={{ minHeight: (slots + 1) * 16 }}>
+      <CardPorts listeningPorts={listeningPorts} ports={ports} labels={false} />
+    </div>;
+  };
+  const rules = d.rules ?? [];
+  const localForwards = rules.filter(rule => rule.kind === "L");
+  const otherForwards = rules.filter(rule => rule.kind !== "L");
+  const serviceForRule = new Map(d.ports.filter(port => port.serviceId).map(port => [port.ruleId, port.serviceId]));
   return (
     <motion.article
+      data-link-host={d.host?.id} aria-label={d.host?.name}
+      data-link-target={d.host && !d.host.diagnostics.length ? "" : undefined}
       className="tunnel-card themed-surface host-card"
+      style={{ "--canvas-focus-color": d.host?.appearance?.color } as CSSProperties}
       {...entrance}
     >
-      <CardPorts
+      <CardPorts listeningPorts={listeningPorts}
         ports={d.ports.filter(
           (port) => port.side === Position.Top || port.side === Position.Bottom,
         )}
@@ -2373,212 +1749,236 @@ const CardContent = memo(function CardContent({
       />
       <div className="host-card-file-anchor">
         <FileTransferPorts host />
+        {!d.host && renderPorts(d.rules ?? [])}
         <div className="card-heading">
-          <span className="card-icon">
-            <ServerIcon size={21} />
+          <span className="card-icon" style={{ color: d.host?.appearance?.color ?? undefined }}>
+            {d.host?.appearance?.icon
+              ? <ConnectionIcon icon={d.host.appearance.icon} color={d.host.appearance.color} />
+              : <ServerIcon size={21} aria-hidden="true" />}
           </span>
           <div className="host-card-heading-content">
-            <div className="host-card-heading-row">
-              <span className="eyebrow">{t("host")}</span>
-              {d.host && (
-                <code title={`${d.host.user}@${d.host.address}:${d.host.port}`}>
-                  {d.host.user}@{d.host.address}:{d.host.port}
-                </code>
-              )}
-            </div>
-            <div className="host-card-heading-row">
-              <h2 title={d.host?.name || t("sourceMissing")}>
-                {d.host?.name || t("sourceMissing")}
-              </h2>
-              <span className="source-badge">
-                {t("forwardCount", { count: d.rules?.length || 0 })}
-              </span>
-              {d.host && <FileTransferStatus nodeId={`host:${d.host.id}`} />}
-              {d.host && (
-                <>
-                  <Button
-                    type="button"
-                    size="icon-sm"
-                    variant="ghost"
-                    className="nodrag nopan"
-                    aria-label={`${t("edit")} ${d.host.name}`}
-                    title={t("edit")}
-                    onClick={() => d.onHostEdit(d.host!)}
-                  >
-                    <Settings2Icon />
-                  </Button>
-                  <Button
-                    type="button"
-                    size="icon-sm"
-                    variant="ghost"
-                    className="nodrag nopan"
-                    aria-label={`${t("createForward")} ${d.host.name}`}
-                    title={t("createForward")}
-                    onClick={() => d.onHostAddForward(d.host!.id)}
-                  >
-                    <GitPullRequestCreateArrowIcon />
-                  </Button>
-                  <OpenFilesButton hostId={d.host.id}/><OpenTerminalButton hostId={d.host.id} />
-                </>
-              )}
-            </div>
+            <h2 title={d.host?.name || t("sourceMissing")}>{d.host?.name || t("sourceMissing")}</h2>
+            {d.host && <code title={`${hostUser}@${endpoint(d.host.address, d.host.port)}`}>
+              {hostUser}@{endpoint(d.host.address, d.host.port)}
+            </code>}
           </div>
+          {d.host && <div className="host-quick-actions nodrag nopan nokey">
+            <FileTransferStatus nodeId={`host:${d.host.id}`} />
+            <OpenFilesButton hostId={d.host.id} disabled={!d.canAdd} />
+            <OpenTerminalButton hostId={d.host.id} disabled={!d.canAdd} />
+            {nav && <HostCredentialMenu host={d.host} disabled={!d.canAdd}
+              onSelect={(loginId) => nav.setDefaultLogin(d.host!, loginId)} />}
+            <AddHostService hostId={d.host.id} />
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button type="button" size="icon-sm" variant="ghost"
+                disabled={!d.canAdd || !!d.host.diagnostics.length}
+                aria-label={t("add")} title={t("add")} />}>
+                <ForwardIcon add />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="host-actions-menu">
+                <DropdownMenuItem onClick={() => d.onHostAddForward(d.host!.id, "R")}>
+                  <ArrowUpRightIcon aria-hidden="true" />{t("typeRShort")}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => d.onHostAddForward(d.host!.id, "D")}>
+                  <NetworkIcon aria-hidden="true" />{t("typeDShort")}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button size="icon-sm" variant="ghost"
+                aria-label={`${t("management")} · ${d.host.name}`} title={t("management")} />}>
+                <EllipsisIcon aria-hidden="true" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="host-actions-menu">
+                <DropdownMenuItem onClick={() => nav?.logs(d.host!.id)}>
+                  <ScrollTextIcon aria-hidden="true" />{t("activity")}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => nav?.details(d.host!.id)}>
+                  <InfoIcon aria-hidden="true" />{t("details")}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => d.onHostEdit(d.host!)}>
+                  <Settings2Icon aria-hidden="true" />{t("edit")}
+                </DropdownMenuItem>
+                {nav && d.host.source === "config" && (
+                  <DropdownMenuItem
+                    disabled={!d.canAdd || d.host.diagnostics.some(message => nativeMessageKey(message) !== "hostSourceLost")}
+                    onClick={() => nav.copyHost(d.host!)}
+                  >
+                    <CopyPlusIcon aria-hidden="true" />{t("copyHost")}
+                  </DropdownMenuItem>
+                )}
+                {nav && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem variant="destructive" disabled={!bridge.desktop}
+                      onClick={() => nav.removeHost(d.host!)}>
+                      <Trash2Icon aria-hidden="true" />{t("deleteHost")}
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>}
         </div>
       </div>
-      <>
-        {d.host && <HostServices hostId={d.host.id} />}
-        <div className="host-card-rules">
-          {d.rules?.map((rule) => {
-            const runtime = d.runtimes?.find((item) => item.ruleId === rule.id);
-            return (
-              <section
-                className="host-card-rule"
-                key={rule.id}
-                aria-label={rule.name}
-                style={
-                  {
-                    "--connection-color":
-                      rule.color || "var(--oria-color-accent)",
-                  } as CSSProperties
-                }
-              >
-                <div className="host-rule-heading">
-                  <strong className="rule-name">
-                    <ConnectionIcon icon={rule.icon} color={rule.color} />
-                    <span title={rule.name}>{rule.name}</span>
-                  </strong>
-                  <Status runtime={runtime} />
-                </div>
-                <div className="host-rule-meta">
-                  <small title={t(`type${rule.kind}`)}>
-                    {t(`type${rule.kind}`)}
-                  </small>
-                  <small className="host-rule-traffic">
-                    ↑ {bytes(runtime?.sent || 0)}　↓{" "}
-                    {bytes(runtime?.received || 0)}
-                  </small>
-                </div>
-                <div className="port-path">
-                  <CardPorts
-                    ports={d.ports.filter(
-                      (p) =>
-                        p.ruleId === rule.id &&
-                        p.side !== Position.Top &&
-                        p.side !== Position.Bottom,
-                    )}
-                    labels={false}
-                  />
-                  <code>
-                    {rule.bindAddress}:
-                    <span
-                      className={
-                        rule.kind === "R" ? "connection-port-number" : undefined
-                      }
-                    >
-                      {rule.bindPort}
-                    </span>
-                  </code>
-                  <ArrowRightIcon size={14} />
-                  <code>
-                    {rule.kind === "D" ? (
-                      <>
-                        SOCKS5 · SSH{" "}
-                        <span className="connection-port-number">
-                          {d.host?.port || 22}
-                        </span>
-                      </>
-                    ) : (
-                      <>
-                        {rule.targetHost}:
-                        <span
-                          className={
-                            rule.kind === "L"
-                              ? "connection-port-number"
-                              : undefined
-                          }
-                        >
-                          {rule.targetPort}
-                        </span>
-                      </>
-                    )}
-                  </code>
-                  <div className="port-path-actions ml-auto flex shrink-0 items-center gap-1 empty:hidden nodrag nopan">
-                    {rule.kind !== "D" && (
-                      <ServiceCommandsButton ruleId={rule.id} />
-                    )}
-                    <OpenServiceButton
-                      rule={rule}
-                      runtime={runtime}
-                      desktop={bridge.desktop}
-                      onOpen={d.onOpenService}
-                    />
-                    <OpenProxyBrowserButton
-                      rule={rule}
-                      runtime={runtime}
-                      desktop={bridge.desktop}
-                      onOpen={d.onOpenProxyBrowser}
-                    />
-                  </div>
-                </div>
-                <ProxyServiceButtons
-                  rule={rule}
-                  runtime={runtime}
-                  services={d.services}
-                  desktop={bridge.desktop}
-                  onOpen={d.onOpenProxyBrowser}
-                  expandable
-                />
-                {runtime?.configurationChanged && (
-                  <p className="muted">{t("configUpdated")}</p>
-                )}
-                {runtime?.message && (
-                  <p className="inline-error">
-                    {formatNativeMessage(runtime.message)}
-                  </p>
-                )}
-                <div className="card-footer">
-                  <RuleActions
-                    rule={rule}
-                    onDetails={d.onDetails}
-                    onEdit={d.onEdit}
-                    onCopy={d.onCopy}
-                    onDelete={d.onDelete}
-                  >
-                    <RunButton
-                      runtime={runtime}
-                      start={() => d.onStart(rule.id)}
-                      stop={() => void d.onStop(rule.id)}
-                    />
-                  </RuleActions>
-                </div>
-              </section>
-            );
-          })}
-        </div>
-      </>
+      {d.host && <>
+        <HostServices
+          host={d.host}
+          canLink={d.canAdd}
+          forwardsFor={serviceId => localForwards.filter(rule => serviceForRule.get(rule.id) === serviceId)}
+          renderPorts={renderPorts}
+          forwardControls={rule => {
+            const runtime = d.runtimes?.find(item => item.ruleId === rule.id);
+            return {
+              runtime,
+              traffic: `↑ ${bytes(runtime?.sent ?? 0)}　↓ ${bytes(runtime?.received ?? 0)}`,
+              open: <OpenServiceButton rule={rule} runtime={runtime} desktop={bridge.desktop} onOpen={d.onOpenService} />,
+            };
+          }}
+          standaloneForwards={localForwards.filter(rule => !serviceForRule.has(rule.id))
+            .map(rule => <CanvasForwardRow key={rule.id} rule={rule} data={d} listeningPorts={listeningPorts} />)}
+        />
+        {!!otherForwards.length && <section className="host-card-group host-card-rules">
+          <h3 className="host-card-group-title">{t("tunnels")}</h3>
+          {otherForwards.map(rule => <CanvasForwardRow key={rule.id} rule={rule} data={d} listeningPorts={listeningPorts} />)}
+        </section>}
+      </>}
     </motion.article>
   );
 });
+function CanvasForwardRow({ rule, data: d, listeningPorts }: {
+  listeningPorts: ReadonlySet<string>;
+  rule: Rule;
+  data: CardData;
+}) {
+  const { t } = useTranslation("tunnel");
+  const runtime = d.runtimes?.find((item) => item.ruleId === rule.id);
+  const type = t(`type${rule.kind}`);
+  const remote = rule.kind === "R";
+  const protocol = rule.kind === "D" ? "SOCKS5" : rule.serviceProtocol?.toUpperCase();
+  const bind = endpoint(rule.bindAddress, remote ? rule.bindPort : rule.bindPort || t("autoPort"));
+  const target = endpoint(rule.targetHost, rule.targetPort);
+  const listenerAddress = remote ? (
+    <code className="canvas-path-address" title={bind}>
+      <span>{endpoint(rule.bindAddress, "")}</span>
+      <button type="button" className="connection-port-number nodrag nopan nokey"
+        data-edit-port={rule.id} data-port-side="host" aria-label={`${t("edit")} · ${bind}`}>
+        {rule.bindPort}
+      </button>
+    </code>
+  ) : <code title={bind}>{bind}</code>;
+  const targetAddress = rule.kind === "D" ? (
+    <code className="canvas-path-address">
+      <span>SSH&nbsp;</span>
+      <span className="connection-port-number">{d.host?.port || 22}</span>
+    </code>
+  ) : (
+    <code className="canvas-path-address" title={target}>
+      <span>{endpoint(rule.targetHost, "")}</span>
+      {rule.kind === "L" ? (
+        <button type="button" className="connection-port-number nodrag nopan nokey"
+          data-edit-port={rule.id} data-port-side="host" aria-label={`${t("edit")} · ${target}`}>
+          {rule.targetPort}
+        </button>
+      ) : <span>{rule.targetPort}</span>}
+    </code>
+  );
+  const DirectionIcon = remote ? ArrowLeftIcon : ArrowRightIcon;
+  return (
+    <section
+      className="host-card-rule"
+      data-canvas-rules={rule.id}
+      aria-label={rule.name}
+      style={
+        {
+          "--connection-color":
+            rule.color || "var(--oria-color-accent)",
+        } as CSSProperties
+      }
+    >
+      {rule.kind !== "L" && <CardEdge source={{
+        type: "forward", hostId: rule.hostId, ruleId: rule.id, name: rule.name,
+      }} disabled={!d.canAdd} />}
+      <div className="host-rule-heading">
+        <h4 className="rule-name">
+          <ConnectionIcon icon={rule.icon} color={rule.color} />
+          <span title={rule.name}>{rule.name}</span>
+        </h4>
+        <Status runtime={runtime} />
+      </div>
+      <div className="host-rule-meta">
+        <button type="button" className="host-rule-type nodrag nopan nokey"
+          data-rule-endpoint={rule.id} aria-haspopup="dialog"
+          aria-label={`${type} · ${rule.name}`} title={type}>
+          {type}
+        </button>
+        <small className="host-rule-traffic">
+          ↑ {bytes(runtime?.sent ?? 0)}　↓{" "}
+          {bytes(runtime?.received ?? 0)}
+        </small>
+      </div>
+      <div className="port-path">
+        <CardPorts listeningPorts={listeningPorts}
+          ports={d.ports.filter(
+            (p) =>
+              p.ruleId === rule.id &&
+              p.side !== Position.Top &&
+              p.side !== Position.Bottom,
+          )}
+          labels={false}
+        />
+        {protocol && <div className="canvas-path-access">
+          <span className="canvas-path-type">{protocol}</span>
+          {rule.kind === "D" ? (
+            <OpenProxyBrowserButton
+              rule={rule}
+              runtime={runtime}
+              desktop={bridge.desktop}
+              onOpen={d.onOpenProxyBrowser}
+            />
+          ) : (
+            <OpenServiceButton
+              rule={rule}
+              runtime={runtime}
+              desktop={bridge.desktop}
+              onOpen={d.onOpenService}
+            />
+          )}
+        </div>}
+        <div className="canvas-path-route">
+          {remote ? targetAddress : listenerAddress}
+          <DirectionIcon aria-hidden="true" />
+          {remote ? listenerAddress : targetAddress}
+        </div>
+      </div>
+      <ProxyServiceButtons
+        rule={rule}
+        runtime={runtime}
+        services={d.services}
+        desktop={bridge.desktop}
+        onOpen={d.onOpenProxyBrowser}
+        expandable
+      />
+      {runtime?.configurationChanged && (
+        <p className="muted">{t("configUpdated")}</p>
+      )}
+      {runtime?.message && (
+        <p className="inline-error">
+          {formatNativeMessage(runtime.message)}
+        </p>
+      )}
+    </section>
+  );
+}
 const nodeTypes = { card: Card };
 const edgeTypes = { connection: ConnectionEdge, "file-transfer": FileTransferEdge };
 const CanvasFlow = memo(ReactFlow<CardNode>);
 const canvasProOptions = { hideAttribution: true };
-const canvasFitOptions = { padding: 0.3, maxZoom: 1 };
+const hostCardShortcuts = { "aria-keyshortcuts": "Backspace Delete" } as const;
+const canvasFitOptions = { padding: { x: "4%", top: "48px", bottom: "80px" }, maxZoom: 1 } as const;
+const canvasStyle = { "--canvas-port-size": `${canvasPortSize}px`, "--wire-travel": `${wireTravelMs}ms` } as CSSProperties;
 const canvasBackground = <Background gap={24} size={1} />;
-type CardActions = Pick<
-  CardData,
-  | "onHostEdit"
-  | "onHostAddForward"
-  | "onAdd"
-  | "onOpenService"
-  | "onOpenProxyBrowser"
-  | "onStart"
-  | "onStop"
-  | "onEdit"
-  | "onDetails"
-  | "onCopy"
-  | "onDelete"
->;
+type CardActions = Pick<CardData, "onHostEdit" | "onHostAddForward" | "onOpenProxyBrowser" | "onOpenService">;
 function useCardActions(actions: CardActions) {
   const latest = useRef(actions);
   useLayoutEffect(() => {
@@ -2586,30 +1986,29 @@ function useCardActions(actions: CardActions) {
   });
   return useMemo<CardActions>(
     () => ({
+      onOpenService: (id, internal) => latest.current.onOpenService(id, internal),
       onHostEdit: (host) => latest.current.onHostEdit(host),
-      onHostAddForward: (id) => latest.current.onHostAddForward(id),
-      onAdd: (placement) => latest.current.onAdd(placement),
-      onOpenService: (id, internalVnc) => latest.current.onOpenService(id, internalVnc),
-      onOpenProxyBrowser: (id, browser, serviceId) =>
-        latest.current.onOpenProxyBrowser(id, browser, serviceId),
-      onStart: (id) => latest.current.onStart(id),
-      onStop: (id) => latest.current.onStop(id),
-      onEdit: (rule) => latest.current.onEdit(rule),
-      onDetails: (rule) => latest.current.onDetails(rule),
-      onCopy: (rule) => latest.current.onCopy(rule),
-      onDelete: (rule) => latest.current.onDelete(rule),
+      onHostAddForward: (id, kind) => latest.current.onHostAddForward(id, kind),
+      onOpenProxyBrowser: (id, browser, serviceId) => latest.current.onOpenProxyBrowser(id, browser, serviceId),
     }),
     [],
   );
 }
 function TunnelCanvas({
+  highlight,
+  onHighlightDone,
+  detailsOpen,
   data,
+  onAddHost,
+  onUndoDelete,
+  onEditPort,
+  hostPlacement,
+  onHostsPlaced,
   onHostEdit,
   onHostAddForward,
-  onAdd,
+  onCreateServiceForward,
+  onLinkForwardHost,
   canAdd,
-  creation,
-  onCreationPlaced,
   onOpenService,
   onOpenProxyBrowser,
   onStart,
@@ -2621,13 +2020,20 @@ function TunnelCanvas({
   focusRuleId,
   onFocusDone,
 }: {
+  highlight?: CanvasMatch;
+  onHighlightDone: () => void;
+  detailsOpen: boolean;
   data: Snapshot;
+  onAddHost: (point: CanvasPoint | null) => void;
+  onUndoDelete: (kind: "host" | "forward") => void;
+  onEditPort: (rule: Rule, side: "local" | "host") => void;
+  hostPlacement: HostPlacement | null;
+  onHostsPlaced: () => void;
   onHostEdit: (host: Host) => void;
-  onHostAddForward: (id: string) => void;
-  onAdd: (placement: PortPlacement) => void;
+  onHostAddForward: CardData["onHostAddForward"];
+  onCreateServiceForward: (hostId: string, serviceId: string) => Promise<string | undefined>;
+  onLinkForwardHost: (ruleId: string, hostId: string) => void;
   canAdd: boolean;
-  creation: CanvasCreation | null;
-  onCreationPlaced: () => void;
   onOpenService: (id: string, internalVnc?: boolean) => void;
   onOpenProxyBrowser: (
     id: string,
@@ -2643,26 +2049,41 @@ function TunnelCanvas({
   focusRuleId: string;
   onFocusDone: () => void;
 }) {
+  const navigation = useContext(CanvasNavigation);
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const menuPoint = useRef<CanvasPoint | null>(null);
   const fileActivities = useFileActivities();
   const { t } = useTranslation("tunnel");
+  const hasUndoHistory = data.hostUndoCount > 0 || data.forwardUndoCount > 0;
   const flow = useReactFlow<CardNode>();
   const nodesReady = useNodesInitialized();
+  useEffect(() => {
+    if (!highlight || !nodesReady) return;
+    const host = canvasRef.current?.querySelector(`[data-id="${CSS.escape("host:" + highlight.hostId)}"]`);
+    if (!host) return;
+    const detail = highlight.serviceId ? host.querySelector(`[data-canvas-service="${CSS.escape(highlight.serviceId)}"]`) :
+      highlight.ruleId ? host.querySelector(`[data-canvas-rules~="${CSS.escape(highlight.ruleId)}"]`) : null;
+    const card = detail ?? host.querySelector(".tunnel-card");
+    if (!card) return;
+    const rect = card.getBoundingClientRect();
+    const center = flow.screenToFlowPosition({ x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 });
+    void flow.setCenter(center.x, center.y, { zoom: 1 });
+    card.classList.add("canvas-search-match");
+    const canvas = canvasRef.current;
+    const timeout = window.setTimeout(onHighlightDone, 1500);
+    canvas?.addEventListener("pointerdown", onHighlightDone, { capture: true, once: true });
+    return () => {
+      window.clearTimeout(timeout);
+      canvas?.removeEventListener("pointerdown", onHighlightDone, true);
+      card.classList.remove("canvas-search-match");
+    };
+  }, [highlight, nodesReady, flow, onHighlightDone]);
+
   const cardActions = useCardActions({
-    onHostEdit,
-    onHostAddForward,
-    onAdd,
-    onOpenService,
-    onOpenProxyBrowser,
-    onStart,
-    onStop,
-    onEdit,
-    onDetails,
-    onCopy,
-    onDelete,
+    onHostEdit, onHostAddForward, onOpenProxyBrowser, onOpenService,
   });
   useEffect(() => {
     if (
-      !creation &&
       focusRuleId &&
       nodesReady &&
       data.rules.some((r) => r.id === focusRuleId)
@@ -2681,7 +2102,7 @@ function TunnelCanvas({
         })
         .then(onFocusDone);
     }
-  }, [creation, focusRuleId, nodesReady, data.rules, flow, onFocusDone]);
+  }, [focusRuleId, nodesReady, data.rules, flow, onFocusDone]);
   const [initialViewport] = useState<Viewport | undefined>(() => {
     try {
       const value = JSON.parse(
@@ -2690,6 +2111,7 @@ function TunnelCanvas({
       return value &&
         Number.isFinite(value.x) &&
         Number.isFinite(value.y) &&
+        Number.isFinite(value.zoom) &&
         value.zoom >= 0.2 &&
         value.zoom <= 2
         ? value
@@ -2702,11 +2124,66 @@ function TunnelCanvas({
     Record<string, { x: number; y: number }>
   >(() => {
     try {
-      return JSON.parse(localStorage.getItem("oria-tunnel-layout") || "{}");
+      return readCanvasLayout(localStorage.getItem("oria-tunnel-layout"));
     } catch {
       return {};
     }
   });
+  useLayoutEffect(() => {
+    if (!hostPlacement || !nodesReady || !canvasRef.current) return;
+    const cards = flow.getNodes();
+    const ids = new Set(hostPlacement.ids.map((id) => `host:${id}`));
+    const added = cards.filter((card) => ids.has(card.id));
+    if (
+      added.length !== ids.size ||
+      added.some((card) => !card.measured?.width || !card.measured.height)
+    )
+      return;
+    const bounds = canvasRef.current.getBoundingClientRect();
+    const center = flow.screenToFlowPosition({
+      x: bounds.left + bounds.width / 2,
+      y: bounds.top + bounds.height / 2,
+    });
+    const occupied = cards
+      .filter((card) => !ids.has(card.id) || positions[card.id])
+      .map((card) => ({
+        ...(positions[card.id] ?? card.position),
+        width: card.measured?.width ?? 360,
+        height: card.measured?.height ?? 224,
+      }));
+    const next = { ...positions };
+    for (const card of added) {
+      if (next[card.id]) continue;
+      const size = { width: card.measured!.width!, height: card.measured!.height! };
+      const origin = hostPlacement.origin ?? {
+        x: center.x - size.width / 2,
+        y: center.y - size.height / 2,
+      };
+      const point = availableHostPosition(origin, size, occupied);
+      next[card.id] = point;
+      occupied.push({ ...point, ...size });
+    }
+    setPositions(next);
+    try {
+      localStorage.setItem("oria-tunnel-layout", JSON.stringify(next));
+    } catch (error) {
+      console.error("Unable to save host layout", error);
+    }
+    const first = added[0];
+    const point = next[first.id];
+    void flow.setCenter(
+      point.x + first.measured!.width! / 2,
+      point.y + first.measured!.height! / 2,
+      {
+        zoom: Math.min(
+          flow.getZoom(),
+          bounds.width / (first.measured!.width! + 64),
+          bounds.height / (first.measured!.height! + 128),
+        ),
+      },
+    );
+    onHostsPlaced();
+  }, [hostPlacement, nodesReady, flow, positions, onHostsPlaced, data.hosts]);
   const [portPlacements, setPortPlacements] = useState(() => {
     try {
       return readPortPlacements(localStorage.getItem(PORT_LAYOUT_KEY));
@@ -2715,50 +2192,6 @@ function TunnelCanvas({
     }
   });
   const latestPortPlacements = useRef(portPlacements);
-  const pendingLayout = useMemo(() => {
-    if (!creation || !data.rules.some((rule) => rule.id === creation.ruleId))
-      return null;
-    const measured = Object.fromEntries(
-      flow
-        .getNodes()
-        .filter((node) => node.measured?.width && node.measured?.height)
-        .map((node) => [
-          node.id,
-          { width: node.measured!.width!, height: node.measured!.height! },
-        ]),
-    );
-    return createdCanvasLayout(
-      data,
-      creation,
-      positions,
-      portPlacements,
-      measured,
-    );
-  }, [creation, data, positions, portPlacements, nodesReady, flow]);
-  useLayoutEffect(() => {
-    if (!creation || !pendingLayout) return;
-    const host = flow.getNode(`host:${creation.hostId}`);
-    if (creation.newHost && (!host?.measured?.width || !host?.measured?.height))
-      return;
-    setPositions(pendingLayout.positions);
-    setPortPlacements(pendingLayout.portPlacements);
-    latestPortPlacements.current = pendingLayout.portPlacements;
-    try {
-      localStorage.setItem(
-        "oria-tunnel-layout",
-        JSON.stringify(pendingLayout.positions),
-      );
-      localStorage.setItem(
-        PORT_LAYOUT_KEY,
-        JSON.stringify(pendingLayout.portPlacements),
-      );
-    } catch (error) {
-      console.error("Unable to save creation layout", error);
-    }
-    onCreationPlaced();
-  }, [creation, pendingLayout, nodesReady, flow, onCreationPlaced]);
-  const renderPositions = pendingLayout?.positions || positions;
-  const renderPlacements = pendingLayout?.portPlacements || portPlacements;
   const onPortMove = useCallback<CardData["onPortMove"]>(
     (id, value, commit) => {
       const next = { ...latestPortPlacements.current };
@@ -2776,23 +2209,42 @@ function TunnelCanvas({
     },
     [],
   );
+  const previousRoutes = useRef<Rule[]>([]);
+  const routes = useMemo(() => projectCanvasRoutes(data.rules, data.runtimes, previousRoutes.current), [data.rules, data.runtimes]);
+  useLayoutEffect(() => { previousRoutes.current = routes; }, [routes]);
+  const groups = useMemo(() => canvasHostGroups(routes, addedHosts(data)), [
+    routes, data.hosts, data.rules, data.addedHostIds,
+  ]);
+  const localServices = useMemo(() => {
+    const matches = new Map<string, RemoteService>();
+    for (const { host, rules } of groups) {
+      if (!host || !rules.some(rule => rule.kind === "L")) continue;
+      const services = (data.services ?? []).filter(
+        service => serviceHostIds(service, data).includes(host.id),
+      );
+      const byId = new Map(services.map(service => [service.id, service]));
+      for (const [ruleId, serviceId] of localForwardServiceIds(host, rules, services)) {
+        const service = byId.get(serviceId);
+        if (service) matches.set(ruleId, service);
+      }
+    }
+    return matches;
+  }, [groups, data.rules, data.services]);
   const projectedNodes = useMemo<CardNode[]>(() => {
-    const groups = canvasHostGroups(data.rules, addedHosts(data));
-    const layout = groupPositions(groups, renderPositions);
+    const layout = groupPositions(groups, positions, data.services);
+    const local = positions.local || { x: 0, y: 0 };
     const localPorts: CardPort[] = [];
     const hostPorts: Record<string, CardPort[]> = {};
     for (const group of groups) {
       hostPorts[group.id] = group.rules.map((rule) => {
-        const labels = connectionPorts(rule, group.host?.port);
-        const color = rule.color || "var(--oria-color-accent)";
-        const side =
-          renderPlacements[rule.id]?.side ||
-          localPortSide(
-            renderPositions.local || { x: 0, y: 0 },
-            layout[group.id],
-          );
+        const labels = connectionPorts(rule, group.host?.port, t("autoPort"));
+        const service = localServices.get(rule.id);
+        const color = (service ?? rule).color || "var(--oria-color-accent)";
+        const hostPosition = layout[group.id];
+        const side = portPlacements[rule.id]?.side || localPortSide(local, hostPosition);
+        const serviceId = service?.id;
         localPorts.push({
-          custom: renderPlacements[rule.id],
+          custom: portPlacements[rule.id],
           ruleId: rule.id,
           name: rule.name,
           label: labels.local,
@@ -2802,10 +2254,11 @@ function TunnelCanvas({
         });
         return {
           ruleId: rule.id,
+          serviceId,
           name: rule.name,
           label: labels.host,
           color,
-          side: oppositeSide(side),
+          side: serviceId ? serviceEndpointSide(local.x, hostPosition.x) : oppositeSide(side),
           type: rule.kind === "R" ? "source" : "target",
         };
       });
@@ -2814,7 +2267,7 @@ function TunnelCanvas({
       {
         id: "local",
         type: "card",
-        position: renderPositions.local || { x: 0, y: 0 },
+        position: local,
         data: {
           local: true,
           ...cardActions,
@@ -2827,6 +2280,8 @@ function TunnelCanvas({
       ...groups.map((group) => ({
         id: group.id,
         type: "card" as const,
+        ariaLabel: group.host?.name,
+        domAttributes: group.host ? hostCardShortcuts : undefined,
         position: layout[group.id],
         data: {
           local: false,
@@ -2841,14 +2296,13 @@ function TunnelCanvas({
       })),
     ];
   }, [
-    data.rules,
-    data.hosts,
-    data.addedHostIds,
+    groups, t,
+    localServices,
     data.services,
     cardActions,
     canAdd,
-    renderPositions,
-    renderPlacements,
+    positions,
+    portPlacements,
     onPortMove,
   ]);
   const previousRuntimes = useRef<CardRuntime[]>([]);
@@ -2863,34 +2317,52 @@ function TunnelCanvas({
   useLayoutEffect(() => {
     previousRuntimes.current = cardRuntimes;
   }, [cardRuntimes]);
-  const liveNodes = useMemo(
-    () =>
-      projectedNodes.map((node) =>
-        node.data.local
-          ? node
-          : {
-              ...node,
-              data: {
-                ...node.data,
-                runtimes: (node.data.rules || []).flatMap((rule) => {
-                  const runtime = runtimeByRule.get(rule.id);
-                  return runtime ? [runtime] : [];
-                }),
-              },
-            },
-      ),
-    [projectedNodes, runtimeByRule],
-  );
+  const liveNodes = useMemo(() => projectedNodes.map(node => ({
+    ...node,
+    data: {
+      ...node.data,
+      listeningPorts: node.data.ports.filter(port => runtimeByRule.get(port.ruleId)?.status === "listening")
+        .map(port => port.ruleId),
+      runtimes: node.data.rules?.flatMap(rule => runtimeByRule.get(rule.id) ?? []),
+    },
+  })), [projectedNodes, runtimeByRule]);
   const [nodes, setNodes] = useState<CardNode[]>(liveNodes);
   useLayoutEffect(() => {
-    setNodes((current) => reconcileCanvasNodes(current, liveNodes));
+    setNodes(current => reconcileCanvasNodes(current, liveNodes));
   }, [liveNodes]);
   const previousEdges = useRef<Edge[]>([]);
-  const tunnelEdges = useMemo(() => projectCanvasEdges(data.rules, runtimeByRule, previousEdges.current), [data.rules, runtimeByRule]);
+  const styledRoutes = useMemo(() => routes.map(rule => {
+    const service = localServices.get(rule.id);
+    return service ? { ...rule, color: service.color ?? null } : rule;
+  }), [routes, localServices]);
+  const tunnelEdges = useMemo(() => {
+    const live = new Map(data.runtimes.map(runtime => [runtime.ruleId, runtime]));
+    return projectCanvasEdges(styledRoutes, live, previousEdges.current);
+  }, [styledRoutes, data.runtimes]);
   const previousFileEdges = useRef<Edge[]>([]);
   const fileEdges = useMemo(() => projectFileEdges(fileActivities, nodes, previousFileEdges.current), [fileActivities, nodes]);
+  const visibleFileEdges = useFileEdgePresence(fileEdges);
   useLayoutEffect(() => { previousEdges.current = tunnelEdges; previousFileEdges.current = fileEdges; }, [tunnelEdges, fileEdges]);
-  const edges = useMemo(() => [...tunnelEdges, ...fileEdges], [tunnelEdges, fileEdges]);
+  // Adding a rule renders two new handles before React Flow measures them.
+  // Subscribe to handle bounds only so panning and metrics keep the same edges.
+  const bounds = useStore((state) => Array.from(state.nodeLookup.values(), (node) => node.internals.handleBounds), shallow);
+  const readyHandles = useMemo(() => {
+    const handles = new Map<string, Set<string>>();
+    for (const pair of bounds) {
+      if (!pair) continue;
+      for (const handle of [...(pair.source ?? []), ...(pair.target ?? [])]) {
+        if (!handle.id) continue;
+        let ids = handles.get(handle.nodeId);
+        if (!ids) handles.set(handle.nodeId, ids = new Set());
+        ids.add(handle.id);
+      }
+    }
+    return handles;
+  }, [bounds]);
+  const edges = useMemo(() => [
+    ...tunnelEdges.filter((edge) => readyHandles.get(edge.source)?.has(edge.sourceHandle!) && readyHandles.get(edge.target)?.has(edge.targetHandle!)),
+    ...visibleFileEdges.filter(edge => !edge.data?.leaving || (readyHandles.has(edge.source) && readyHandles.has(edge.target))),
+  ], [tunnelEdges, visibleFileEdges, readyHandles]);
   const onMoveEnd = useCallback((_: unknown, viewport: Viewport) => {
     try {
       localStorage.setItem("oria-tunnel-viewport", JSON.stringify(viewport));
@@ -2921,6 +2393,25 @@ function TunnelCanvas({
     },
     [flow, positions],
   );
+  const onNodeClick = useCallback((event: React.MouseEvent, node: CardNode) => {
+    if (
+      !node.data.host || !(event.target instanceof Element) ||
+      event.target.closest(".nodrag, .nokey, button, a, input, textarea, select, [contenteditable]")
+    ) return;
+    event.target.closest<HTMLElement>(".react-flow__node")?.focus({ preventScroll: true });
+  }, []);
+  const onCanvasKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (
+      !canAdd || !navigation || event.defaultPrevented || event.repeat ||
+      event.nativeEvent.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
+      (event.key !== "Backspace" && event.key !== "Delete") ||
+      !(event.target instanceof HTMLElement) || !event.target.classList.contains("react-flow__node")
+    ) return;
+    const selected = flow.getNodes().filter((node) => node.selected);
+    if (selected.length !== 1 || selected[0].id !== event.target.dataset.id || !selected[0].data.host) return;
+    event.preventDefault();
+    navigation.removeHost(selected[0].data.host);
+  };
   const onNodeDoubleClick = useCallback(
     (_: unknown, node: CardNode) => {
       void flow.fitView({
@@ -2932,49 +2423,120 @@ function TunnelCanvas({
     },
     [flow],
   );
-  const onEdgeClick = useCallback(
-    (_: unknown, edge: Edge) => {
-      const rule = data.rules.find((rule) => rule.id === edge.id);
-      if (rule) cardActions.onEdit(rule);
-    },
-    [data.rules, cardActions],
-  );
   const onCanvasDoubleClick = useCallback(
     (event: React.MouseEvent) => {
       if ((event.target as HTMLElement).classList.contains("react-flow__pane"))
-        void flow.fitView({ padding: 0.25, duration: 200, maxZoom: 1 });
+        void flow.fitView({ ...canvasFitOptions, duration: 200 });
     },
     [flow],
   );
   return (
-    <div className="canvas">
-      {!data.rules.length && (
+    <div className="canvas" style={canvasStyle} ref={canvasRef} onKeyDown={onCanvasKeyDown}>
+      {nodes.length === 1 && (
         <PageEmptyState compact className="canvas-hint w-fit" icon={<GraphStarIcon />} title={t("empty")} />
       )}
-      <div className="canvas-mask">
-        <CanvasFlow
-          nodes={nodes}
-          defaultViewport={initialViewport}
-          onMoveEnd={onMoveEnd}
-          edges={edges}
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          onNodesChange={onNodesChange}
-          onNodeDoubleClick={onNodeDoubleClick}
-          onEdgeClick={onEdgeClick}
-          zoomOnDoubleClick={false}
-          onDoubleClick={onCanvasDoubleClick}
-          nodesConnectable={false}
-          proOptions={canvasProOptions}
-          deleteKeyCode={null}
-          minZoom={0.2}
-          maxZoom={2}
-          fitView={!initialViewport}
-          fitViewOptions={canvasFitOptions}
+      <ContextMenu>
+        <ContextMenuTrigger className="canvas-mask"
+          onContextMenu={(e) => {
+            if (!(e.target instanceof Element) || !e.target.classList.contains("react-flow__pane")) {
+              e.preventBaseUIHandler();
+              return;
+            }
+            menuPoint.current = flow.screenToFlowPosition({ x: e.clientX, y: e.clientY });
+          }}
+          onTouchStart={(e) => {
+            const touch = e.touches[0];
+            if (e.touches.length !== 1 || !(e.target instanceof Element) || !e.target.classList.contains("react-flow__pane")) {
+              e.preventBaseUIHandler();
+              return;
+            }
+            menuPoint.current = flow.screenToFlowPosition({ x: touch.clientX, y: touch.clientY });
+          }}
         >
-          {canvasBackground}
-        </CanvasFlow>
-      </div>
+          <EndpointCards disabled={detailsOpen} onEdit={(id, side) => {
+            const saved = data.rules.find((r) => r.id === id);
+            if (saved) onEditPort(saved, side);
+          }} render={(id, close) => {
+            const rule = data.rules.find((r) => r.id === id);
+            if (!rule) return null;
+            const appearance = localServices.get(id) ?? rule;
+            const runtime = data.runtimes.find((r) => r.ruleId === id);
+            const active = displayedRoute(rule, runtime);
+            const savedHostName = data.hosts.find((host) => host.id === rule.hostId)?.name;
+            const hostName = (runtime?.desiredRunning ? runtime.hostSnapshot?.name : undefined) ??
+              data.hosts.find((host) => host.id === active.hostId)?.name;
+            const pending = runtime?.configurationChanged && runtime.desiredRunning;
+            const editPort = (side: "local" | "host") => { close(); onEditPort(rule, side); };
+            return <>
+              <div className="canvas-service-heading">
+                <strong className="rule-name"><ConnectionIcon icon={appearance.icon ?? null} color={appearance.color ?? null} /><span title={rule.name}>{rule.name}</span></strong>
+                <Status runtime={runtime} />
+              </div>
+              <div className="canvas-service-meta">
+                <span>{t(`type${active.kind}`)}</span>
+                <small>↑ {bytes(runtime?.sent ?? 0)}　↓ {bytes(runtime?.received ?? 0)}</small>
+              </div>
+              <EndpointRoute route={active} hostName={hostName} editPort={pending ? undefined : editPort} />
+              {pending && <section className="endpoint-pending">
+                <strong>{t("nextStart")}</strong>
+                <EndpointRoute route={rule} hostName={savedHostName} editPort={editPort} />
+              </section>}
+              {runtime?.message && <p className="inline-error">{formatNativeMessage(runtime.message)}</p>}
+              <div className="endpoint-actions">
+                <RuleActions rule={rule} onEdit={() => {close(); onEdit(rule);}} onDetails={() => {close(); onDetails(rule);}}
+                  onCopy={() => {close(); onCopy(rule);}}
+                  onDelete={() => {close(); onDelete(rule);}}>
+                  <ForwardRunButton runtime={runtime} start={() => {close(); onStart(id);}} stop={() => void onStop(id)}/>
+                </RuleActions>
+              </div>
+            </>;
+          }}>
+          <CanvasLinks onConnect={(link) => {
+            if (link.type === "forward") {
+              onLinkForwardHost(link.ruleId, link.hostId);
+              return;
+            }
+            void onCreateServiceForward(link.hostId, link.serviceId).then((id) => {
+              if (id && link.placement) onPortMove(id, link.placement, true);
+            });
+          }}>
+          <CanvasFlow
+            nodes={nodes}
+            defaultViewport={initialViewport}
+            onMoveEnd={onMoveEnd}
+            edges={edges}
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
+            onNodesChange={onNodesChange}
+            onNodeClick={onNodeClick}
+            onNodeDoubleClick={onNodeDoubleClick}
+            zoomOnDoubleClick={false}
+            onDoubleClick={onCanvasDoubleClick}
+            nodesConnectable={false}
+            proOptions={canvasProOptions}
+            deleteKeyCode={null}
+            minZoom={0.2}
+            maxZoom={2}
+            fitView={!initialViewport}
+            fitViewOptions={canvasFitOptions}
+          >
+            {canvasBackground}
+          </CanvasFlow>
+          </CanvasLinks>
+          </EndpointCards>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuItem disabled={!canAdd} onClick={() => onAddHost(menuPoint.current)}>
+            <ServerPlusIcon aria-hidden="true" />{t("addHost")}
+          </ContextMenuItem>
+          {hasUndoHistory && (
+            <>
+              <ContextMenuSeparator />
+              <UndoDeleteItems history={data} disabled={!canAdd} onUndo={onUndoDelete} />
+            </>
+          )}
+        </ContextMenuContent>
+      </ContextMenu>
       <div className="canvas-controls overlay">
         <Button
           variant="ghost"
@@ -2988,7 +2550,7 @@ function TunnelCanvas({
           variant="ghost"
           size="icon-sm"
           aria-label={t("fit")}
-          onClick={() => void flow.fitView({ padding: 0.25, maxZoom: 1 })}
+          onClick={() => void flow.fitView(canvasFitOptions)}
         >
           <MaximizeIcon />
         </Button>

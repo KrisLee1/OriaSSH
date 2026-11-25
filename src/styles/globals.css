@@ -37,6 +37,12 @@
 .search-input-control[data-embedded]:focus-within > svg {
   color: var(--oria-color-primary);
 }
+.search-popover {
+  width: min(280px, calc(100vw - 24px));
+}
+.search-popover .search-input-control {
+  flex: none;
+}
 
 /* AuthenticationField supplies the single reveal control in Edge/WebView2. */
 input[type="password"]::-ms-reveal {

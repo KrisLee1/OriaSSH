@@ -1,4 +1,28 @@
 import { Position, type Node } from "@xyflow/react";
+import type { PortPlacement } from "./port-placement";
+
+// React Flow measures the outside face of a handle. On a lit wire the
+// optical junction sits at its centre, exactly on the card rim.
+export const canvasPortSize = 12;
+const portInset = canvasPortSize / 2;
+export const canvasPortCenterOffset = {
+  [Position.Left]: { x: portInset, y: 0 },
+  [Position.Right]: { x: -portInset, y: 0 },
+  [Position.Top]: { x: 0, y: portInset },
+  [Position.Bottom]: { x: 0, y: -portInset },
+};
+
+type LocalPort = { side: Position; custom?: PortPlacement };
+const horizontalPortGap = 64;
+const verticalPortGap = 30;
+const cornerInset = 38;
+
+function verticalPortInsets(ports: readonly LocalPort[]) {
+  return {
+    start: ports.some((port) => port.side === Position.Top) ? cornerInset : 15,
+    end: ports.some((port) => port.side === Position.Bottom) ? cornerInset : 15,
+  };
+}
 
 export function localPortSide(
   local: { x: number; y: number },
@@ -15,19 +39,58 @@ export function localPortSide(
       : Position.Right;
 }
 
-export function localCardSize(ports: { side: Position }[]) {
+export function localCardSize(ports: readonly LocalPort[]) {
   const count = (side: Position) =>
     ports.filter((port) => port.side === side).length;
+  const columns = Math.max(count(Position.Top), count(Position.Bottom));
+  const rows = Math.max(count(Position.Left), count(Position.Right));
+  const { start, end } = verticalPortInsets(ports);
   return {
-    width: Math.max(
-      200,
-      (Math.max(count(Position.Top), count(Position.Bottom)) + 1) * 64,
-    ),
+    width: Math.max(200, (columns + 1) * horizontalPortGap),
     height: Math.max(
       164,
-      (Math.max(count(Position.Left), count(Position.Right)) + 1) * 30,
+      (rows + 1) * verticalPortGap,
+      start + end + Math.max(0, rows - 1) * verticalPortGap,
     ),
   };
+}
+
+export function localPortOffsets(
+  ports: readonly LocalPort[],
+  size: ReturnType<typeof localCardSize>,
+) {
+  const offsets = new Array<number>(ports.length);
+  const vertical = verticalPortInsets(ports);
+  for (const side of Object.values(Position)) {
+    const group = ports.flatMap((port, index) =>
+      port.side === side ? [{ port, index }] : [],
+    );
+    if (!group.length) continue;
+    const horizontal = side === Position.Top || side === Position.Bottom;
+    const dimension = horizontal ? size.width : size.height;
+    const gap = horizontal ? horizontalPortGap : verticalPortGap;
+    const { start, end } = horizontal
+      ? { start: gap / 2, end: gap / 2 }
+      : vertical;
+    const ordered = group
+      .map(({ port, index }, order) => ({
+        index,
+        desired: port.custom?.offset ?? (order + 1) / (group.length + 1),
+      }))
+      .sort((a, b) => a.desired - b.desired);
+    let previous = start - gap;
+    ordered.forEach(({ index, desired }, order) => {
+      // Leave room for each following label, including near a reserved corner.
+      const lastAvailable =
+        dimension - end - (ordered.length - order - 1) * gap;
+      previous = Math.max(
+        previous + gap,
+        Math.min(desired * dimension, lastAvailable),
+      );
+      offsets[index] = previous / dimension;
+    });
+  }
+  return offsets;
 }
 
 // Runtime snapshots replace domain data, while React Flow owns measured geometry
@@ -85,6 +148,22 @@ export function reconcileCanvasNodes<T extends Node>(
 // measured endpoint stays valid while React Flow updates its new coordinates.
 export function canvasPortId(ruleId: string, type: "source" | "target") {
   return `${ruleId}-${type}`;
+}
+
+export function readCanvasLayout(value: string | null): Record<string, { x: number; y: number }> {
+  try {
+    const saved = JSON.parse(value ?? "{}");
+    if (!saved || typeof saved !== "object" || Array.isArray(saved)) return {};
+    return Object.fromEntries(Object.entries(saved).filter(
+      (entry): entry is [string, { x: number; y: number }] => {
+        const point = entry[1];
+        return !!point && typeof point === "object" &&
+          "x" in point && Number.isFinite(point.x) && "y" in point && Number.isFinite(point.y);
+      },
+    ));
+  } catch {
+    return {};
+  }
 }
 
 export function canvasLayout(

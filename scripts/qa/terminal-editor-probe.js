@@ -930,6 +930,86 @@ async function verifyForegroundClose(session) {
     "confirmed tab removed",
   );
 }
+async function verifyContextualCompletions(input, shell) {
+  const ghost = () =>
+    input.parentElement.querySelector(".shell-ghost")?.textContent;
+  const builtin = shell === "zsh" ? "setop" : "shop";
+  setValue(input, builtin);
+  await until(() => ghost() === "t", "shell-specific builtin suggestion");
+  key(input, "ArrowRight");
+  await until(
+    () => input.value === builtin + "t",
+    "accepted builtin suggestion",
+  );
+  setValue(input, "sudo docker compose lo");
+  await until(() => ghost() === "gs", "nested tool suggestion");
+  key(input, "ArrowRight");
+  await until(
+    () => input.value === "sudo docker compose logs",
+    "accepted nested suggestion",
+  );
+  setValue(input, "echo ok | git status --untracked-files=");
+  key(input, "Tab");
+  await until(
+    () => visible(".shell-candidates [role=option]").length === 3,
+    "option value suggestions",
+  );
+  key(input, "ArrowDown");
+  await until(
+    () =>
+      document.getElementById(input.getAttribute("aria-activedescendant"))
+        ?.textContent === "normal",
+    "active option follows the keyboard",
+  );
+  key(input, "Enter");
+  await until(
+    () => input.value === "echo ok | git status --untracked-files=normal",
+    "accepted option value",
+  );
+  await report(shell + " contextual completions");
+}
+
+async function verifyLastTerminalRow(input, shell) {
+  setValue(
+    input,
+    "i=0; while [ $i -lt 100 ]; do printf 'row %s\\n' \"$i\"; i=$((i+1)); done; printf '>>> '; sleep 4",
+  );
+  await sleep(25);
+  key(input, "Enter");
+  const pane = await until(
+    () => visible(".shell-transcript[data-command-running]").at(-1),
+    "interactive-size terminal output",
+  );
+  const screen = pane.querySelector(".shell-current-block .ssh-terminal-screen");
+  const height = pane.clientHeight;
+  try {
+    pane.style.flex = "none";
+    for (const inset of [0, 6, 12]) {
+      pane.style.height = height - inset + "px";
+      await sleep(150);
+      await until(() => {
+        pane.scrollTop = pane.scrollHeight;
+        const grid = screen.querySelector(".xterm-screen");
+        const row = [...screen.querySelectorAll(".xterm-rows > div")].find(
+          (entry) => entry.textContent.trim() === ">>>",
+        );
+        const bounds = screen.getBoundingClientRect();
+        const padding = parseFloat(getComputedStyle(screen).paddingBottom);
+        return (
+          row &&
+          grid.getBoundingClientRect().bottom <= bounds.bottom - padding + 1 &&
+          row.getBoundingClientRect().bottom <= pane.getBoundingClientRect().bottom + 1
+        );
+      }, "unclipped last row at pane height " + (height - inset));
+    }
+  } finally {
+    pane.style.removeProperty("height");
+    pane.style.removeProperty("flex");
+  }
+  await until(() => editor() && editor() !== input, "foreground output ended");
+  await report(shell + " prompt row fits the bottom of the resized pane");
+}
+
 async function verifyLocal(cfg, hostId) {
   await ipc("show_main_window");
   await ipc("plugin:event|emit", {
@@ -937,15 +1017,18 @@ async function verifyLocal(cfg, hostId) {
     payload: {},
   });
   const start = await until(
-    () => visible("[data-terminal-start]").at(-1),
+    () => {
+      const pane = visible("[data-terminal-start]").at(-1);
+      return pane?.querySelector('[data-terminal-target="' + hostId + '"]') && pane;
+    },
     "empty terminal host list",
   );
-  if (
-    (await ipc("terminal_sessions")).length ||
-    visible("[role=dialog]").length ||
-    !start.querySelector('[data-terminal-target="' + hostId + '"]')
-  )
-    throw Error("unexpected connection, modal or missing host on first open");
+  const unexpectedSessions = (await ipc("terminal_sessions")).length;
+  const unexpectedDialogs = visible('[role="dialog"][data-open]').length;
+  if (unexpectedSessions || unexpectedDialogs)
+    throw Error(
+      `initial terminal page has ${unexpectedSessions} sessions and ${unexpectedDialogs} dialogs`,
+    );
   start.querySelector('[data-terminal-target=""]').click();
   const input = await until(editor, "local integrated shell");
   const current = (await ipc("terminal_sessions")).find(
@@ -957,6 +1040,7 @@ async function verifyLocal(cfg, hostId) {
     current.routeHostIds.length
   )
     throw Error("expected independent local PTY");
+  await verifyContextualCompletions(input, cfg.localShell);
   await run("pwd; stty size");
   const lines = visible(".shell-output-text").at(-1).textContent.split("\n");
   const after = (await ipc("terminal_sessions")).find(
@@ -967,6 +1051,7 @@ async function verifyLocal(cfg, hostId) {
     lines.at(-1) !== after.rows + " " + after.cols
   )
     throw Error("incorrect local cwd or PTY size: " + JSON.stringify(lines));
+  await verifyLastTerminalRow(editor(), cfg.localShell);
   setValue(editor(), "exit 7");
   await sleep(35);
   key(editor(), "Enter");
@@ -983,17 +1068,14 @@ async function verifyLocal(cfg, hostId) {
       more.dispatchEvent(
         new MouseEvent(type, { button: 0, bubbles: true, cancelable: true }),
       );
-    return until(
-      () => visible(".terminal-target-menu").at(-1),
-      "new terminal menu",
-    );
+    return until(() => {
+      const menu = visible(".terminal-target-menu").at(-1);
+      return menu?.querySelector('[data-terminal-target="' + hostId + '"]') && menu;
+    }, "new terminal menu with the SSH target");
   };
   const menu = await openMenu();
-  if (
-    visible("[role=dialog]").length ||
-    !menu.querySelector('[data-terminal-target="' + hostId + '"]')
-  )
-    throw Error("missing SSH target in non-modal menu");
+  if (visible('[role="dialog"][data-open]').length)
+    throw Error("unexpected open dialog over the terminal target menu");
   const lastHost = menu.querySelector(
     '[data-terminal-target="' + hostId + '"]',
   );
@@ -1118,6 +1200,7 @@ async function verify(cfg, shell) {
     () => editor() === document.activeElement && editor(),
     "focused prompt after SSH authentication",
   );
+  await verifyContextualCompletions(noMatches, shell);
   setValue(noMatches, "qa_unknown_prefix_7391");
   await sleep(60);
   key(noMatches, "Tab");
@@ -1235,6 +1318,7 @@ async function verify(cfg, shell) {
     "confirmed working directory",
   );
   await report(shell + " completion");
+  await verifyLastTerminalRow(editor(), shell);
   if (cfg.pointer) {
     const clickInput = editor();
     const clickLine =
@@ -1893,6 +1977,15 @@ async function verify(cfg, shell) {
 try {
   const cfg = await (await fetch(reportURL)).json();
   await until(() => document.querySelector(".app-titlebar"), "app");
+  if (localStorage.getItem("oria-tunnel.initial-preferences.v1") !== "completed") {
+    const done = await until(
+      () => visible("[role=dialog] .settings-section-panel").at(-1)
+        ?.closest("[role=dialog]")?.querySelector(".form-actions button"),
+      "initial preferences",
+    );
+    done.click();
+    await until(() => !visible("[role=dialog]").length, "initial preferences closed");
+  }
   await verify(cfg, "bash");
   if (!cfg.localOnly) await verify(cfg, "zsh");
   await report("complete");

@@ -1,0 +1,155 @@
+.settings-dialog {
+  block-size: 32rem;
+}
+
+.settings-dialog-tabs {
+  display: flex;
+  flex: 1;
+  min-block-size: 0;
+  border-block-start: var(--oria-border-width-default) solid
+    var(--oria-color-border);
+}
+
+.settings-dialog-tabs[data-orientation="horizontal"] {
+  flex-direction: column;
+}
+
+.settings-dialog-navigation {
+  flex: none;
+  padding: 0.75rem;
+  background: color-mix(in srgb, var(--oria-color-muted) 25%, transparent);
+}
+
+.settings-dialog-tabs[data-orientation="vertical"] .settings-dialog-navigation {
+  inline-size: 10rem;
+  border-inline-end: var(--oria-border-width-default) solid
+    var(--oria-color-border);
+}
+
+.settings-dialog-tab-list[data-variant="soft"] {
+  display: grid;
+  justify-content: stretch;
+  inline-size: 100%;
+  block-size: auto;
+  padding: 0;
+  gap: 0.25rem;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.settings-dialog-tab-list[data-variant="soft"] > [data-slot="tabs-trigger"] {
+  inline-size: 100%;
+  block-size: auto;
+  min-block-size: 2.25rem;
+  justify-content: flex-start;
+  gap: 0.5rem;
+  padding: 0.375rem 0.625rem;
+  white-space: normal;
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+
+.settings-dialog-tabs[data-orientation="horizontal"]
+  .settings-dialog-navigation {
+  padding: 0.5rem 0.75rem;
+  border-block-end: var(--oria-border-width-default) solid
+    var(--oria-color-border);
+}
+
+.settings-dialog-tabs[data-orientation="horizontal"]
+  .settings-dialog-tab-list
+  > [data-slot="tabs-trigger"] {
+  justify-content: center;
+  padding-inline: 0.125rem;
+  font-size: 0.75rem;
+  text-align: center;
+}
+
+.settings-dialog-tabs[data-orientation="horizontal"]
+  .settings-dialog-tab-list
+  svg {
+  display: none;
+}
+
+.settings-dialog-panel {
+  min-inline-size: 0;
+  min-block-size: 0;
+}
+
+.settings-dialog-panel:not([hidden]) {
+  display: flex;
+}
+
+.settings-dialog-panel:focus-visible {
+  outline: 1px solid var(--oria-color-ring);
+  outline-offset: -2px;
+}
+
+.settings-dialog-panel .responsive-modal-body {
+  padding-block: 1rem;
+}
+
+.settings-dialog-content {
+  display: grid;
+  gap: 1rem;
+}
+
+.settings-dialog-content .settings-section-panel > :not(:last-child) {
+  border-block-end-color: color-mix(
+    in srgb,
+    var(--oria-color-muted-fg) 15%,
+    transparent
+  );
+}
+
+.settings-dialog-content .settings-section-panel [data-slot="item-title"] {
+  display: flex;
+  max-inline-size: 100%;
+  overflow: visible;
+  overflow-wrap: anywhere;
+}
+
+.ssh-source-files .field-section-header {
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+}
+
+.ssh-source-files .field-section-header > span {
+  color: var(--oria-color-fg);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.ssh-source-files .muted {
+  line-height: 1.45;
+}
+
+.ssh-source-files .host-path-list {
+  margin-block-start: 0.25rem;
+}
+
+.settings-dialog-section-title {
+  padding-inline-start: 0.125rem;
+  color: var(--oria-color-fg);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.settings-dialog-action:focus-visible {
+  outline: 2px solid var(--oria-color-ring);
+  outline-offset: -2px;
+}
+
+.settings-dialog-action-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  inline-size: 2rem;
+  block-size: 2rem;
+  border-radius: var(--oria-radius-md);
+  background: color-mix(in srgb, var(--oria-color-primary) 12%, transparent);
+  color: var(--oria-color-primary);
+}

@@ -31,6 +31,18 @@ const task: Task = {
   eta: null,
 };
 describe("transfer item information", () => {
+  it("keeps the folder badge steady during a child commit and identifies a standalone file commit", () => {
+    const row = (changes: Partial<Task>) => renderToStaticMarkup(
+      <TransferItem task={{ ...task, phase: "committing", ...changes }} onAction={() => {}} />,
+    );
+    for (const folder of [
+      { sources: ["/album"], sourceKinds: ["directory"] },
+      { sources: ["/album"], commitSource: "/album/frame.jpg" },
+    ]) {
+      expect(row(folder)).toMatch(/files-state-transferring[^>]*>传输中</);
+    }
+    expect(row({ sourceKinds: ["file"] })).toMatch(/files-state-committing[^>]*>正在提交</);
+  });
   it("shows live scan evidence in both row widths without a premature total or percentage", () => {
     const html = renderToStaticMarkup(
       <TransferItem task={{ ...task, phase: "preparing", scan: { items: 250001, bytes: 60 * 1024 ** 3, directory: "/folder/nested" } }} onAction={() => {}} />,

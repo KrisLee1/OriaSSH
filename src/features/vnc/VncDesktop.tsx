@@ -2,12 +2,18 @@ import { useEffect, useRef, useState } from "react";
 import { VncWorkspaces } from "./VncWorkspaces";
 import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "react-i18next";
-import { LoaderCircleIcon, MonitorOffIcon, RotateCwIcon } from "lucide-react";
+import {
+  LoaderCircleIcon,
+  LockKeyholeIcon,
+  MonitorOffIcon,
+  RotateCwIcon,
+} from "lucide-react";
 import { PageEmptyState } from "@/components/page-empty-state";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { PasswordInput } from "@/components/password-input";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import {
   keysym,
   pointerButtons,
@@ -43,6 +49,7 @@ function Desktop() {
   const { t } = useTranslation("vnc");
   const { hideLocalCursor, renderMode } = useVncDisplayPreferences();
   const [endpoint, setEndpoint] = useState("");
+  const [sshUser, setSshUser] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>("connecting");
   const [error, setError] = useState("");
   const [scale, setScale] = useState("fit");
@@ -217,11 +224,15 @@ function Desktop() {
     setError("");
     setPhase("connecting");
     try {
-      const id = await invoke<string>("vnc_begin", { skipSaved });
+      const { id, sshUser } = await invoke<{ id: string; sshUser: string | null }>(
+        "vnc_begin",
+        { skipSaved },
+      );
       if (token !== attempt.current) {
         await invoke("vnc_end", { id });
         return;
       }
+      setSshUser(sshUser);
       const reader = new AbortController();
       session.current = { id, queue: [], sending: false, reader };
       let initialSize = true;
@@ -430,6 +441,7 @@ function Desktop() {
     >
       <VncHeader
         endpoint={endpoint}
+        sshUser={sshUser}
         phase={phase}
         hideLocalCursor={hideLocalCursor}
         renderMode={renderMode}
@@ -487,7 +499,7 @@ function Desktop() {
           )}
         />
       )}
-      {error && (connected || phase === "credentials") && (
+      {error && connected && (
         <div role="alert" className="vnc-error">
           {formatNativeMessage(error)}
         </div>
@@ -529,55 +541,99 @@ function Desktop() {
         />
       )}
       {phase === "credentials" && (
-        <form
-          className="vnc-password themed-surface rounded-xl border border-border"
-          aria-labelledby="vnc-password-label"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const input = secret.current!;
-            send({
-              type: "password",
-              password: input.value,
-              remember: vaultAvailable && remember,
-            });
-            input.value = "";
-            setPhase("connecting");
-          }}
-        >
-          <div className="grid gap-1">
-            <label
-              id="vnc-password-label"
-              htmlFor="vnc-password"
-              className="text-base font-semibold"
-            >
-              {t("credentials")}
-            </label>
-            <span
+        <div className="vnc-password-layer">
+          <form
+            className="vnc-password themed-surface rounded-xl border border-border"
+            aria-labelledby="vnc-password-heading"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const input = secret.current!;
+              send({
+                type: "password",
+                password: input.value,
+                remember: vaultAvailable && remember,
+              });
+              input.value = "";
+              setPhase("connecting");
+            }}
+          >
+            <header className="flex items-center gap-2.5">
+              <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
+                <LockKeyholeIcon aria-hidden="true" className="size-4" />
+              </span>
+              <h1
+                id="vnc-password-heading"
+                className="text-base leading-5 font-semibold"
+              >
+                {t("credentials")}
+              </h1>
+            </header>
+            <dl
               id="vnc-password-target"
-              className="break-all text-sm text-muted-foreground"
+              className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1 rounded-lg bg-muted/50 px-3 py-1.5 text-xs leading-4 [overflow-wrap:anywhere]"
             >
-              {endpoint}
-            </span>
-          </div>
-          <PasswordInput
-            id="vnc-password"
-            autoFocus
-            aria-describedby="vnc-password-target"
-            ref={secret}
-          />
-          <div className="flex items-center justify-end gap-2">
-            {vaultAvailable && (
-              <label className="mr-auto inline-flex items-center gap-2 text-sm">
-                <Checkbox checked={remember} onCheckedChange={setRemember} />
-                {t("rememberPassword", { ns: "tunnel" })}
-              </label>
-            )}
-            <Button type="button" variant="outline" onClick={stop}>
-              {t("cancel", { ns: "terminal" })}
-            </Button>
-            <Button type="submit">{t("connect")}</Button>
-          </div>
-        </form>
+              <dt className="text-muted-foreground">{t("targetAddress")}</dt>
+              <dd className="font-mono tabular-nums" dir="auto">
+                {endpoint}
+              </dd>
+              {sshUser && (
+                <>
+                  <dt className="text-muted-foreground">{t("sshUser")}</dt>
+                  <dd className="font-medium" dir="auto">
+                    {sshUser}
+                  </dd>
+                </>
+              )}
+            </dl>
+            <div className="grid min-w-0 gap-1.5">
+              <Label htmlFor="vnc-password" className="text-sm leading-4">
+                {t("authPassword", { ns: "tunnel" })}
+              </Label>
+              <PasswordInput
+                id="vnc-password"
+                autoFocus
+                aria-describedby={
+                  error ? "vnc-password-target vnc-password-notice" : "vnc-password-target"
+                }
+                ref={secret}
+              />
+              {error && (
+                <p
+                  id="vnc-password-notice"
+                  role="alert"
+                  className="text-xs leading-4 text-destructive [overflow-wrap:anywhere]"
+                >
+                  {formatNativeMessage(error)}
+                </p>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
+              {vaultAvailable && (
+                <div className="mr-auto flex min-w-0 items-center gap-2">
+                  <Checkbox
+                    id="vnc-remember-password"
+                    checked={remember}
+                    onCheckedChange={setRemember}
+                  />
+                  <Label
+                    htmlFor="vnc-remember-password"
+                    className="cursor-pointer text-xs leading-4 font-normal"
+                  >
+                    {t("rememberPassword", { ns: "tunnel" })}
+                  </Label>
+                </div>
+              )}
+              <div className="ml-auto flex items-center gap-2">
+                <Button type="button" variant="ghost" onClick={stop}>
+                  {t("cancel", { ns: "terminal" })}
+                </Button>
+                <Button type="submit" className="min-w-16">
+                  {t("connect")}
+                </Button>
+              </div>
+            </div>
+          </form>
+        </div>
       )}
       <div className="vnc-viewport" hidden={!connected}>
         <canvas

@@ -75,12 +75,7 @@ pub(crate) struct TrayServiceActivity {
     pub busy: std::collections::BTreeSet<String>,
     pub terminals: std::collections::BTreeSet<(String, String, String)>,
 }
-const TRAY_PANELS: [(&str, &str, &str); 3] = [
-    (
-        "tray:service-commands",
-        "服务命令",
-        "tunnel://open-service-commands",
-    ),
+const TRAY_PANELS: [(&str, &str, &str); 2] = [
     ("tray:ssh-terminal", "终端", "tunnel://open-terminal"),
     ("tray:files", "文件传输", "tunnel://open-files"),
 ];
@@ -330,16 +325,6 @@ fn build_tray_menu(app: &tauri::AppHandle, model: &TrayMenu) -> tauri::Result<Me
         crate::native_message::text("trayServiceCommands", serde_json::json!({})),
         true,
     )?;
-    services.append(&MenuItem::with_id(
-        app,
-        "tray:service-commands",
-        crate::native_message::text("trayOpenCommands", serde_json::json!({})),
-        true,
-        None::<&str>,
-    )?)?;
-    if !model.services.is_empty() {
-        services.append(&PredefinedMenuItem::separator(app)?)?;
-    }
     for (service_index, service) in model.services.iter().enumerate() {
         let submenu = Submenu::new(app, &service.label, !service.targets.is_empty())?;
         if service.targets.is_empty() {
@@ -374,7 +359,9 @@ fn build_tray_menu(app: &tauri::AppHandle, model: &TrayMenu) -> tauri::Result<Me
         }
         services.append(&submenu)?;
     }
-    menu.append(&services)?;
+    if !model.services.is_empty() {
+        menu.append(&services)?;
+    }
     let terminals = Submenu::new(
         app,
         crate::native_message::text("traySshTerminal", serde_json::json!({})),

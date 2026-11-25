@@ -26,7 +26,7 @@ describe("application icon preference", () => {
     expect(resolveApplicationIcon("mono", false)).toBe("mono")
   })
 
-  it("persists only the icon preference in OriaTunnel's own namespace and notifies subscribers", () => {
+  it("persists only the icon preference in OriaSSH's own namespace and notifies subscribers", () => {
     const values = new Map<string, string>()
     const dispatchEvent = vi.fn()
     vi.stubGlobal("window", { localStorage: {
@@ -38,7 +38,7 @@ describe("application icon preference", () => {
     expect(values.get(APPLICATION_ICON_STORAGE_KEY)).toBe("mono")
     expect(APPLICATION_ICON_STORAGE_KEY).toBe("oria-tunnel.application-icon.v1")
     expect(getApplicationIconPreference()).toBe("mono")
-    expect(dispatchEvent.mock.calls[0][0].type).toBe("oria-tunnel:application-icon-change")
+    expect(dispatchEvent.mock.calls[0][0].type).toBe("oria-ssh:application-icon-change")
   })
 
   it("does not invoke native APIs in the browser preview", async () => {

@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/combobox";
 import { groupHosts } from "./host-groups";
 import { hostAuthLabels, hostAuthMethod } from "./host-auth";
+import { resolvedDefaultLogin } from "./login-identities";
 
 type HostOption = { host: Host; key: string };
 type HostOptionGroup = { key: string; label: string; items: HostOption[] };
@@ -34,9 +35,12 @@ export function HostPicker({
       groupHosts(hosts, "tags").map(([tag, members]) => ({
         key: tag,
         label: tag || t("ungrouped"),
-        items: members.map((host) => ({ host, key: `${tag}:${host.id}` })),
+        items: members.map((host) => ({
+          host: resolvedDefaultLogin(host) ?? host,
+          key: `${tag}:${host.id}`,
+        })),
       })),
-    [hosts, value, t],
+    [hosts, t],
   );
   const selected =
     groups

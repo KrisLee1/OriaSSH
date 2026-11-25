@@ -3,7 +3,7 @@ import { emptyRule } from "./rule-model";
 import { connectionPorts, connectionVisual } from "./connection-visual";
 
 describe("connection visual semantics", () => {
-  const rule = { ...emptyRule("h"), color: "#7c3aed" };
+  const rule = { ...emptyRule("h"), bindPort: 15432, color: "#7c3aed" };
   it("only shows a solid connected line after Rust reports a listener", () => {
     expect(connectionVisual(rule, { status: "listening" })).toEqual({
       state: "connected",

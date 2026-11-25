@@ -9,6 +9,21 @@ afterEach(async () => {
 });
 
 describe("authentication field", () => {
+  it("shows the selected account when the dialog already names the host", async () => {
+    await i18n.changeLanguage("en");
+    const html = renderToStaticMarkup(
+      <AuthenticationField
+        host={{ ...emptyHost(), name: "Fixture", address: "fixture.invalid", user: "deploy account" }}
+        labelContext="account"
+        value=""
+        onChange={() => {}}
+        remember={false}
+        onRemember={() => {}}
+      />,
+    );
+    expect(html).toMatch(/<label[^>]*>Password \/ private key passphrase \(optional\) · deploy account@fixture\.invalid<\/label>/);
+  });
+
   it.each([
     ["zh-CN", "密码 / 私钥口令（可选）", "显示密码"],
     ["en", "Password / private key passphrase (optional)", "Show password"],

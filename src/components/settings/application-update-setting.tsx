@@ -171,7 +171,7 @@ export function ApplicationUpdateSetting({
         </Item>
         <Item className="justify-end rounded-none border-0 px-3 py-2.5">
           <ExternalLink
-            href="https://github.com/KrisLee1/OriaTunnel/releases"
+            href="https://github.com/KrisLee1/OriaSSH/releases"
             className={buttonVariants({ variant: "outline", size: "sm" })}
           >
             {t("releases")}

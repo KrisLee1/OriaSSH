@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Host } from "@/types";
 import {
@@ -28,6 +28,7 @@ export function HostTags({
   onChange: (tags: string[]) => void;
 }) {
   const { t } = useTranslation("tunnel");
+  const hintId = useId();
   const [query, setQuery] = useState("");
   const anchor = useComboboxAnchor();
   const selected = normalizeTags(value);
@@ -71,6 +72,7 @@ export function HostTags({
           </ComboboxValue>
           <ComboboxChipsInput
             aria-label={t("tags")}
+            aria-describedby={hintId}
             placeholder={t("tagsPlaceholder")}
             onKeyDown={(event) => {
               if (
@@ -93,6 +95,9 @@ export function HostTags({
           </ComboboxList>
         </ComboboxContent>
       </Combobox>
+      <small className="muted" id={hintId}>
+        {t("hostTagsHint")}
+      </small>
     </div>
   );
 }

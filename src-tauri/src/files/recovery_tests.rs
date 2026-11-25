@@ -480,6 +480,9 @@ async fn resumes_download_after_the_original_sftp_channel_closes() {
                 id: new_id.into(),
                 host_id: "fixture".into(),
                 host_name: "loopback".into(),
+                login_id: "primary:fixture".into(),
+                user: "tester".into(),
+                route_key: None,
                 phase: "connected".into(),
                 route: vec!["fixture".into()],
                 fingerprint: None,
@@ -713,4 +716,203 @@ fn unfinished_commit_evidence_survives_repeated_restarts() {
             assert!(task.needs_recovery());
         }
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Stop {
+    Pause,
+    Shutdown,
+    Disconnect,
+}
+
+#[tokio::test]
+async fn resumes_nested_downloads_after_pause_shutdown_and_disconnect() {
+    for stop in [Stop::Pause, Stop::Shutdown, Stop::Disconnect] {
+        resume_nested_folder(false, stop).await;
+    }
+}
+
+#[tokio::test]
+async fn resumes_nested_uploads_after_pause_shutdown_and_disconnect() {
+    for stop in [Stop::Pause, Stop::Shutdown, Stop::Disconnect] {
+        resume_nested_folder(true, stop).await;
+    }
+}
+
+async fn resume_nested_folder(upload: bool, stop: Stop) {
+    const SIZE: usize = 256 * 1024;
+    let local = tempfile::tempdir().unwrap();
+    let remote = tempfile::tempdir().unwrap();
+    let (source, destination) = if upload {
+        (local.path(), remote.path())
+    } else {
+        (remote.path(), local.path())
+    };
+    let mut files = BTreeMap::new();
+    for i in 0..6u8 {
+        let dir = PathBuf::from("batch").join("nested").join(i.to_string());
+        std::fs::create_dir_all(source.join(&dir)).unwrap();
+        let path = dir.join("report.bin");
+        std::fs::write(source.join(&path), vec![i; SIZE]).unwrap();
+        files.insert(path, i);
+    }
+    let pacing = if upload {
+        ".paced-writes"
+    } else {
+        ".paced-reads"
+    };
+    std::fs::write(remote.path().join(pacing), []).unwrap();
+    let journal = local.path().join("history.json");
+    let (m, original_server) = manager(remote.path().into(), journal.clone()).await;
+    let local_dir = m
+        .directory(None, local.path().to_str().unwrap().into())
+        .await
+        .unwrap();
+    let remote_dir = m
+        .directory(Some("session".into()), "/".into())
+        .await
+        .unwrap();
+    let (from, to) = if upload {
+        (local_dir, remote_dir)
+    } else {
+        (remote_dir, local_dir)
+    };
+    let source_root = m.entry(&from.id).unwrap().path;
+    let batch = from
+        .entries
+        .into_iter()
+        .find(|e| e.name == "batch")
+        .unwrap();
+    let id = m
+        .submit(uuid::Uuid::new_v4().to_string(), vec![batch.id], to.id)
+        .await
+        .unwrap();
+
+    // Interrupt an actual partial write after at least one nested file was committed.
+    let (partial, in_flight) = tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let task = m.tasks.lock().unwrap()[&id].clone();
+            if let Some(temp) = task.temp.filter(|_| !task.completed.is_empty()) {
+                let path = if upload {
+                    remote.path().join(temp.strip_prefix('/').unwrap())
+                } else {
+                    PathBuf::from(temp)
+                };
+                if std::fs::metadata(&path).is_ok_and(|m| (1..SIZE as u64).contains(&m.len())) {
+                    break (path, task.current_source.unwrap());
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    })
+    .await
+    .expect("expected a partially written second or later file");
+
+    let Fs::Remote(stale) = m.remotes.lock().unwrap()["session"].clone() else {
+        unreachable!()
+    };
+    match stop {
+        Stop::Pause => m.control(&id, "pause", None).await.unwrap(),
+        Stop::Shutdown => m.shutdown().await,
+        Stop::Disconnect => stale.raw.close_session().unwrap(),
+    }
+    let stopped = settled(&m, &id).await;
+    let phase = match stop {
+        Stop::Pause => "paused",
+        Stop::Shutdown => "interrupted",
+        Stop::Disconnect => "failed",
+    };
+    assert_eq!(stopped.phase, phase, "{stop:?}: {:?}", stopped.error);
+    assert!((1..files.len()).contains(&stopped.completed.len()));
+    if !matches!(stop, Stop::Disconnect) {
+        stale.raw.close_session().unwrap();
+    }
+    tokio::time::timeout(Duration::from_secs(3), stale.raw.closed())
+        .await
+        .unwrap();
+    assert_eq!(
+        stale.raw.opendir("/").await.unwrap_err().to_string(),
+        "session closed"
+    );
+    let m = if matches!(stop, Stop::Shutdown) {
+        Arc::new(Manager::new(journal))
+    } else {
+        m
+    };
+
+    // Change every committed source. A replay would conflict or deliver different bytes.
+    for completed in &stopped.completed {
+        let relative = std::path::Path::new(completed)
+            .strip_prefix(&source_root)
+            .unwrap();
+        assert!(files.contains_key(relative));
+        std::fs::write(source.join(relative), vec![0xff; SIZE]).unwrap();
+    }
+    // Change the interrupted file too, including the bytes already in its partial copy.
+    let in_flight = std::path::Path::new(&in_flight)
+        .strip_prefix(&source_root)
+        .unwrap();
+    *files.get_mut(in_flight).unwrap() = 0x7f;
+    std::fs::write(source.join(in_flight), vec![0x7f; SIZE]).unwrap();
+    if stopped.temp.is_none() {
+        assert_eq!(
+            m.control(&id, "resume", Some("session".into()))
+                .await
+                .unwrap_err(),
+            "notConnected"
+        );
+    }
+    let (fresh, server) = setup(remote.path().into(), false).await;
+    let new_id = "reconnected";
+    m.remotes.lock().unwrap().insert(new_id.into(), fresh);
+    m.sessions.lock().unwrap().insert(
+        new_id.into(),
+        Session {
+            id: new_id.into(),
+            host_id: "fixture".into(),
+            host_name: "loopback".into(),
+            login_id: "primary:fixture".into(),
+            user: "tester".into(),
+            route_key: None,
+            phase: "connected".into(),
+            route: vec!["fixture".into()],
+            fingerprint: None,
+            endpoint: None,
+            error: None,
+        },
+    );
+    m.route_keys
+        .lock()
+        .unwrap()
+        .insert(new_id.into(), "frozen-fixture".into());
+    if upload && matches!(stop, Stop::Disconnect) {
+        // The old SFTP channel could not remove its in-flight remote temporary file.
+        assert_eq!(
+            m.control(&id, "resume", Some(new_id.into()))
+                .await
+                .unwrap_err(),
+            "cleanupFailed"
+        );
+        m.control(&id, "cleanup", Some(new_id.into()))
+            .await
+            .unwrap();
+    }
+    assert!(!partial.exists());
+    m.control(&id, "resume", Some(new_id.into())).await.unwrap();
+    let done = settled(&m, &id).await;
+    assert_eq!(done.phase, "completed", "{stop:?}: {:?}", done.error);
+    assert_eq!(
+        (done.count, done.completed.len(), done.skipped),
+        (files.len(), files.len(), 0)
+    );
+    assert_eq!(done.bytes, (files.len() * SIZE) as u64);
+    for (path, expected_byte) in &files {
+        assert!(
+            std::fs::read(destination.join(path)).unwrap() == vec![*expected_byte; SIZE],
+            "{stop:?}: {path:?}"
+        );
+    }
+    m.shutdown().await;
+    original_server.abort();
+    server.abort();
 }

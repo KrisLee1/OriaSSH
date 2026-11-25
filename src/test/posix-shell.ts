@@ -5,7 +5,7 @@ import { dirname, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 
 function resolveShell() {
-  const override = process.env.ORIATUNNEL_TEST_SH;
+  const override = process.env.ORIASSH_TEST_SH;
   if (override) return override;
   if (process.platform !== "win32") return "/bin/sh";
   const gitCore = execFileSync("git", ["--exec-path"], {
@@ -18,7 +18,7 @@ function resolveShell() {
   const shell = candidates.find(existsSync);
   if (!shell)
     throw new Error(
-      "POSIX command tests require Git for Windows or ORIATUNNEL_TEST_SH pointing to sh.exe.",
+      "POSIX command tests require Git for Windows or ORIASSH_TEST_SH pointing to sh.exe.",
     );
   return shell;
 }

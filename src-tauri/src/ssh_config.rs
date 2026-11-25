@@ -44,7 +44,7 @@ fn words(line: &str) -> Result<Vec<String>, String> {
         } else {
             match ch {
                 '\'' | '"' => quote = Some(ch),
-                '#' => break,
+                '#' if word.is_empty() => break,
                 c if c.is_whitespace() => {
                     if !word.is_empty() {
                         words.push(std::mem::take(&mut word));
@@ -218,9 +218,13 @@ fn matches(patterns: &[String], alias: &str) -> bool {
         let (negative, p) = pattern
             .strip_prefix('!')
             .map_or((false, pattern.as_str()), |p| (true, p));
-        if glob::Pattern::new(&p.to_ascii_lowercase())
-            .is_ok_and(|p| p.matches(&alias.to_ascii_lowercase()))
-        {
+        let matched = if p.contains(['*', '?', '[', ']']) {
+            glob::Pattern::new(&p.to_ascii_lowercase())
+                .is_ok_and(|p| p.matches(&alias.to_ascii_lowercase()))
+        } else {
+            p.eq_ignore_ascii_case(alias)
+        };
+        if matched {
             if negative {
                 return false;
             }
@@ -617,7 +621,9 @@ pub fn discover() -> Discovery {
 pub fn discover_with(additional: &[String]) -> Discovery {
     let home = dirs::home_dir().unwrap_or_default();
     #[cfg(debug_assertions)]
-    if let Some(file) = std::env::var_os("ORIATUNNEL_TEST_SSH_CONFIG") {
+    if let Some(file) = std::env::var_os("ORIASSH_TEST_SSH_CONFIG")
+        .or_else(|| std::env::var_os("ORIATUNNEL_TEST_SSH_CONFIG"))
+    {
         return discover_files(&[file.into()], &home);
     }
     let mut files = vec![home.join(".ssh/config")];
@@ -778,7 +784,7 @@ mod tests {
         // canonicalization, or source inclusion. Never run -G on a user config.
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("config");
-        let text="Host service\n HostName actual.internal\n User deploy\nMatch originalhost service host actual.* user deploy\n Port 2222\nMatch final originalhost service\n ServerAliveInterval 17\nMatch all\n ConnectTimeout 24\n";
+        let text="Host service\n HostName actual.internal\n User deploy#ops # login alias\n IdentityFile test#key\nMatch originalhost service host actual.* user deploy#ops\n Port 2222\nMatch final originalhost service\n ServerAliveInterval 17\nMatch all\n ConnectTimeout 24\n";
         std::fs::write(&root, text).unwrap();
         #[cfg(windows)]
         let exe = std::path::PathBuf::from(std::env::var_os("WINDIR").unwrap())
@@ -802,6 +808,7 @@ mod tests {
         assert!(host.diagnostics.is_empty());
         assert_eq!(host.address, fields["hostname"]);
         assert_eq!(host.user, fields["user"]);
+        assert_eq!(host.identity_files, [fields["identityfile"]]);
         assert_eq!(host.port.to_string(), fields["port"]);
         assert_eq!(
             host.connection.keepalive_interval_secs.to_string(),

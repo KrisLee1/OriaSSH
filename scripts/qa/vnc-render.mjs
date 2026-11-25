@@ -8,7 +8,7 @@ import { control, port, until } from "./vnc-native-control.mjs";
 import { framebuffer } from "./vnc-workspace-rfb.mjs";
 
 const executable = path.resolve(
-  process.argv[2] ?? "src-tauri/target/debug/oria-tunnel.exe",
+  process.argv[2] ?? "src-tauri/target/debug/oria-ssh.exe",
 );
 const baseline = process.argv.includes("--baseline");
 const native4k = process.argv.includes("--4k-viewport");
@@ -27,8 +27,8 @@ const app = spawn(executable, ["vnc://127.0.0.1:" + remote.port], {
   stdio: "ignore",
   env: {
     ...process.env,
-    ORIATUNNEL_TEST_DATA_DIR: path.join(profile, "data"),
-    ORIATUNNEL_TEST_SSH_CONFIG: sshConfig,
+    ORIASSH_TEST_DATA_DIR: path.join(profile, "data"),
+    ORIASSH_TEST_SSH_CONFIG: sshConfig,
     WEBVIEW2_USER_DATA_FOLDER: path.join(profile, "webview"),
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:
       "--remote-debugging-port=" +

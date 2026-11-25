@@ -42,8 +42,85 @@ impl RuleIcon {
     }
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HostAppearance {
+    pub icon: Option<RuleIcon>,
+    pub color: Option<String>,
+}
+
+fn validate_appearance(icon: Option<&RuleIcon>, color: Option<&str>) -> Result<(), String> {
+    if let Some(icon) = icon {
+        icon.validate()?;
+    }
+    if color.is_some_and(|c| {
+        c.len() != 7 || !c.starts_with('#') || !c.as_bytes()[1..].iter().all(u8::is_ascii_hexdigit)
+    }) {
+        return Err(crate::native_message::plain("colorInvalid"));
+    }
+    Ok(())
+}
+impl HostAppearance {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_appearance(self.icon.as_ref(), self.color.as_deref())
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LoginIdentity {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub label: String,
+    pub user: String,
+    pub auth_method: AuthMethod,
+    #[serde(default)]
+    pub identity_files: Vec<String>,
+}
+
+pub(crate) fn valid_ssh_user(user: &str) -> bool {
+    !user.trim().is_empty() && !user.chars().any(char::is_control)
+}
+
+pub fn validate_logins(logins: &[LoginIdentity]) -> Result<(), String> {
+    let mut ids = std::collections::BTreeSet::new();
+    if logins.len() > 32
+        || logins.iter().any(|login| {
+            uuid::Uuid::parse_str(&login.id).is_err()
+                || !ids.insert(&login.id)
+                || login.label.len() > 256
+                || login.label.chars().any(char::is_control)
+                || login.user.len() > 256
+                || !valid_ssh_user(&login.user)
+                || login.identity_files.len() > 32
+                || login.identity_files.iter().any(|p| {
+                    p.is_empty()
+                        || p.len() > 4096
+                        || p.contains("PRIVATE KEY-----")
+                        || p.contains(['\r', '\n', '\0'])
+                })
+        })
+    {
+        return Err(crate::native_message::plain("loginIdentityMissing"));
+    }
+    Ok(())
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Host {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub logins: Vec<LoginIdentity>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub credential_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub credential_only: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub primary_login_label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_login_id: Option<String>,
+    #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
+    pub active_login_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub appearance: Option<HostAppearance>,
     pub id: String,
     pub name: String,
     pub address: String,
@@ -70,8 +147,50 @@ pub struct Host {
     pub unsupported_session_options: Vec<String>,
 }
 impl Host {
+    pub fn default_login(&self) -> Result<Host, String> {
+        self.login(self.default_login_id.as_deref())
+    }
+
+    pub fn login_id(&self) -> String {
+        self.active_login_id
+            .clone()
+            .unwrap_or_else(|| primary_login_id(&self.id))
+    }
+
+    pub fn login(&self, id: Option<&str>) -> Result<Host, String> {
+        let mut host = self.clone();
+        host.active_login_id = None;
+        let id = id.filter(|id| *id != primary_login_id(&self.id));
+        let id = if self.credential_only && id.is_none() {
+            Some(
+                self.default_login_id
+                    .as_deref()
+                    .ok_or_else(|| crate::native_message::plain("loginIdentityMissing"))?,
+            )
+        } else {
+            id
+        };
+        if let Some(id) = id {
+            let login = self
+                .logins
+                .iter()
+                .find(|i| i.id == id)
+                .ok_or_else(|| crate::native_message::plain("loginIdentityMissing"))?;
+            host.user.clone_from(&login.user);
+            host.auth_method.clone_from(&login.auth_method);
+            host.identity_files.clone_from(&login.identity_files);
+            host.active_login_id = Some(id.into());
+        }
+        Ok(host)
+    }
+    pub fn matches_login(&self, frozen: &Host) -> bool {
+        self.login(frozen.active_login_id.as_deref())
+            .is_ok_and(|h| h.same_connection(frozen))
+    }
+
     pub fn same_connection(&self, other: &Self) -> bool {
-        self.address == other.address
+        self.active_login_id == other.active_login_id
+            && self.address == other.address
             && self.port == other.port
             && self.user == other.user
             && self.identity_files == other.identity_files
@@ -101,6 +220,11 @@ pub enum AuthMethod {
     Password,
     PrivateKey,
     Agent,
+}
+impl AuthMethod {
+    pub fn accepts_password(&self) -> bool {
+        matches!(self, Self::Auto | Self::Password)
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -154,6 +278,8 @@ pub struct Rule {
     pub name: String,
     pub color: Option<String>,
     pub host_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub login_identity_id: Option<String>,
     pub bind_address: String,
     pub bind_port: u16,
     pub target_host: String,
@@ -174,6 +300,7 @@ impl Default for Rule {
             id: String::new(),
             name: String::new(),
             host_id: String::new(),
+            login_identity_id: None,
             color: None,
             icon: None,
             service_protocol: None,
@@ -192,10 +319,39 @@ impl Default for Rule {
         }
     }
 }
+// Source aliases with the same endpoint remain independent profiles.
+pub fn primary_login_id(host_id: &str) -> String {
+    format!("primary:{host_id}")
+}
+
 impl Rule {
+    pub fn resolve_host_login(&mut self, host: &Host) {
+        self.login_identity_id = Some(
+            host.default_login_id
+                .clone()
+                .unwrap_or_else(|| primary_login_id(&host.id)),
+        );
+    }
+
+    pub fn bind_primary_if_missing(&mut self) {
+        self.login_identity_id
+            .get_or_insert_with(|| primary_login_id(&self.host_id));
+    }
+
+    pub fn check_login_id(&self) -> Result<(), String> {
+        if self.login_identity_id.as_ref().is_some_and(|id| {
+            id != &primary_login_id(&self.host_id) && uuid::Uuid::parse_str(id).is_err()
+        }) {
+            return Err(crate::native_message::plain("loginIdentityMissing"));
+        }
+        Ok(())
+    }
+
     pub fn same_connection(&self, other: &Self) -> bool {
         let mut before = self.clone();
         let mut after = other.clone();
+        before.bind_primary_if_missing();
+        after.bind_primary_if_missing();
         before.name.clear();
         after.name.clear();
         before.service_protocol = None;
@@ -211,19 +367,10 @@ impl Rule {
         before == after
     }
     pub fn validate(&self) -> Result<(), String> {
+        self.check_login_id()?;
         self.reconnect.validate()?;
-        if let Some(icon) = &self.icon {
-            icon.validate()?;
-        }
-        if let Some(color) = &self.color {
-            if color.len() != 7
-                || !color.starts_with('#')
-                || !color.as_bytes()[1..].iter().all(u8::is_ascii_hexdigit)
-            {
-                return Err(crate::native_message::plain("colorInvalid"));
-            }
-        }
-        if self.bind_port == 0
+        validate_appearance(self.icon.as_ref(), self.color.as_deref())?;
+        if (self.kind == ForwardKind::R && self.bind_port == 0)
             || self.name.trim().is_empty()
             || self.host_id.is_empty()
             || (self.kind != ForwardKind::D
@@ -247,9 +394,33 @@ impl Rule {
         Ok(())
     }
 }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForwardRoute {
+    pub kind: ForwardKind,
+    pub host_id: String,
+    pub bind_address: String,
+    pub bind_port: u16,
+    pub target_host: String,
+    pub target_port: u16,
+}
+impl From<&Rule> for ForwardRoute {
+    fn from(rule: &Rule) -> Self {
+        Self {
+            kind: rule.kind,
+            host_id: rule.host_id.clone(),
+            bind_address: rule.bind_address.clone(),
+            bind_port: rule.bind_port,
+            target_host: rule.target_host.clone(),
+            target_port: rule.target_port,
+        }
+    }
+}
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Runtime {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub service_ids: Vec<String>,
     pub rule_id: String,
     pub run_id: String,
     pub status: String,
@@ -259,6 +430,9 @@ pub struct Runtime {
     pub received: u64,
     pub connections: usize,
     pub host_snapshot: Option<Host>,
+    pub active_route: Option<ForwardRoute>,
+    pub bound_address: Option<std::net::IpAddr>,
+    pub bound_port: Option<u16>,
     pub configuration_changed: bool,
     pub verification_endpoint: Option<String>,
     pub jump_snapshots: Vec<Host>,
@@ -440,6 +614,8 @@ pub fn rule_uses_host(rule: &Rule, hosts: &[Host], id: &str) -> bool {
 pub struct Config {
     #[serde(default)]
     pub services: Vec<crate::commands::Service>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub login_credentials: std::collections::BTreeMap<String, LoginIdentity>,
     pub hosts: Vec<Host>,
     pub rules: Vec<Rule>,
     pub trusted_keys: std::collections::BTreeMap<String, String>,
@@ -452,6 +628,14 @@ pub struct Config {
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct HostMetadata {
+    #[serde(default)]
+    pub logins: Vec<LoginIdentity>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub credential_ids: Vec<String>,
+    #[serde(default)]
+    pub default_login_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub appearance: Option<HostAppearance>,
     pub name: String,
     pub tags: Vec<String>,
 }
@@ -459,6 +643,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             services: Vec::new(),
+            login_credentials: Default::default(),
             hosts: Vec::new(),
             rules: Vec::new(),
             trusted_keys: Default::default(),
@@ -475,6 +660,8 @@ impl Default for Config {
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
     pub services: Vec<crate::commands::Service>,
+    pub login_credentials: Vec<LoginIdentity>,
+    pub password_storage_supported: bool,
     pub hosts: Vec<Host>,
     pub added_host_ids: Vec<String>,
     pub rules: Vec<Rule>,
@@ -495,6 +682,31 @@ pub struct Snapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn new_host_sessions_use_the_selected_default_login() {
+        let mut host = Host {
+            id: "ssh:fixture".into(),
+            source: "config".into(),
+            user: "source-user".into(),
+            logins: vec![LoginIdentity {
+                id: "alternate".into(),
+                label: String::new(),
+                user: "selected-user".into(),
+                auth_method: AuthMethod::Agent,
+                identity_files: vec![],
+            }],
+            ..Default::default()
+        };
+        assert_eq!(host.default_login().unwrap().user, "source-user");
+        host.default_login_id = Some("alternate".into());
+        assert_eq!(host.default_login().unwrap().login_id(), "alternate");
+        assert_eq!(host.default_login().unwrap().user, "selected-user");
+        assert_eq!(
+            host.login(Some("primary:ssh:fixture")).unwrap().user,
+            "source-user"
+        );
+    }
+
     #[test]
     fn current_config_round_trip_retains_connection_and_rule_defaults() {
         let config = Config {

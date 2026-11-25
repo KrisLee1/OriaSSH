@@ -5,7 +5,10 @@ import i18n from "@/i18n";
 import { ServiceEditor } from "./preset-commands";
 import { ServiceReview, ServiceEnableDialog } from "./service-review";
 import { reviewScript, OutputDecoder } from "./command-model";
-import { ImportConfigReview } from "@/features/tunnels/import-config";
+import {
+  ImportConfigReview,
+  importDependencies,
+} from "@/features/tunnels/import-config";
 import { ConfigExportDialog } from "@/features/tunnels/config-export";
 import type {
   ImportPreview,
@@ -53,9 +56,10 @@ const service: RemoteService = {
   },
 };
 describe("service package review", () => {
-  it("shows unlimited terminal duration explicitly and permits zero only in terminal editors", () => {
+  it("offers unlimited duration for standalone commands in either interface and bounds combined starts", () => {
     const foreground = {
       ...service,
+      control: { ...service.control!, startActionId: null },
       actions: service.actions.map((a) => ({
         ...a,
         mode: "terminal" as const,
@@ -79,6 +83,15 @@ describe("service package review", () => {
     expect(editor(foreground)).toMatch(
       /type="number"[^>]*min="0"[^>]*max="3600"[^>]*value="0"/,
     );
+    expect(
+      editor({
+        ...foreground,
+        actions: foreground.actions.map((action) => ({
+          ...action,
+          mode: "command",
+        })),
+      }),
+    ).toMatch(/type="number"[^>]*min="0"[^>]*max="3600"[^>]*value="0"/);
     expect(editor(service)).toMatch(
       /type="number"[^>]*min="1"[^>]*max="3600"[^>]*value="60"/,
     );
@@ -115,7 +128,7 @@ describe("service package review", () => {
   it("allows saving an imported health-only service without adding an unrelated action", () => {
     const html = renderToStaticMarkup(
       <ServiceEditor
-        service={{ ...service, actions: [] }}
+        service={{ ...service, hostIds: ["h"], actions: [] }}
         data={{ hosts: [], rules: [] } as unknown as Snapshot}
         busy={false}
         onSave={() => {}}
@@ -176,39 +189,102 @@ describe("service package review", () => {
     expect(html).not.toContain('checked=""');
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>导入/);
   });
-  it("uses explicitly selected services as export scope without a second inclusion step or zero-forward prose", () => {
+  it("preselects migration services while requiring separate consent for their scripts", () => {
     const html = renderToStaticMarkup(
       <ConfigExportDialog
         data={
           { hosts: [], rules: [], services: [service] } as unknown as Snapshot
         }
-        ruleIds={[]}
-        initialServiceIds={[service.id]}
+        mode="migration"
         close={() => {}}
       />,
     );
-    expect(html).not.toContain("包含所选服务命令");
-    expect(html).not.toContain("版本 1");
-    expect(html).not.toContain("已选择 0 个转发");
-    expect(html).toContain("HEALTH_CANARY");
+    expect(html).toContain(i18n.t("exportScriptsHint", { ns: "tunnel" }));
+    expect(html).toContain(i18n.t("sharing.review", { ns: "commands" }));
+    expect(html).not.toContain("HEALTH_CANARY");
     expect(html).toContain('checked=""');
-    expect(html).not.toMatch(/<button[^>]*disabled=""/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>核对清单/);
   });
-  it("keeps service commands off by default when exporting forwards", () => {
+  it("starts sharing with an empty scope and service scripts excluded", () => {
     const html = renderToStaticMarkup(
       <ConfigExportDialog
         data={
           { hosts: [], rules: [], services: [service] } as unknown as Snapshot
         }
-        ruleIds={["r"]}
+        mode="share"
         close={() => {}}
       />,
-    );
-    expect(html).toContain(
-      i18n.t("sharing.includeCommands", { ns: "commands" }),
     );
     expect(html).not.toContain("HEALTH_CANARY");
-    expect(html).toContain('aria-checked="false"');
+    expect(html).not.toContain('checked=""');
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>核对清单/);
+  });
+  it("follows only selected dependencies and stops at explicitly reused hosts", () => {
+    const preview = {
+      hosts: [
+        { id: "constructor", proxyJump: "jump" },
+        { id: "jump" },
+        { id: "unused" },
+      ],
+      rules: [{ id: "forward", hostId: "constructor", loginId: "login-a" }],
+      services: [
+        {
+          id: "service",
+          hostIds: ["constructor"],
+          loginByHost: { constructor: "login-b" },
+        },
+      ],
+    } as unknown as ImportPreview;
+    const selected = importDependencies(
+      preview,
+      [],
+      ["forward"],
+      ["service"],
+      {},
+    );
+    expect([...selected.hosts]).toEqual(["constructor", "jump"]);
+    expect([...(selected.bindings.get("constructor") ?? [])]).toEqual([
+      "login-b",
+    ]);
+    expect([
+      ...importDependencies(preview, [], [], ["service"], {
+        constructor: "local",
+      }).hosts,
+    ]).toEqual(["constructor"]);
+    expect(importDependencies(preview, [], [], [], {}).hosts.size).toBe(0);
+  });
+  it("offers a v3 standalone host without selecting a rule or a command", () => {
+    const preview: ImportPreview = {
+      token: "preview",
+      fileName: "host.json",
+      version: 3,
+      selectedHostIds: ["host"],
+      hosts: [
+        {
+          id: "host",
+          name: "Host only",
+          endpoint: "fixture@127.0.0.1:22",
+          conflict: false,
+          keyPathsOmitted: false,
+          keyPaths: [],
+          blocked: false,
+        },
+      ],
+      rules: [],
+      services: [],
+    };
+    const html = renderToStaticMarkup(
+      <ImportConfigReview
+        preview={preview}
+        hosts={[]}
+        busy={false}
+        close={() => {}}
+        submit={async () => true}
+      />,
+    );
+    expect(html).toContain('checked=""');
+    expect(html).toContain("导入 1 台新主机、0 个服务、0 条转发");
+    expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>导入/);
   });
   it("shows control and bidi escapes without changing the saved script", () => {
     const raw = "printf '中文'\n\t\u200b\u2066x\u2069\x1b\x7f";

@@ -47,9 +47,9 @@
   },
   "about": {
     "title": "Über",
-    "open": "Über OriaTunnel",
-    "openWithUpdate": "Über OriaTunnel, Update verfügbar",
-    "icon": "OriaTunnel-App-Symbol",
+    "open": "Über OriaSSH",
+    "openWithUpdate": "Über OriaSSH, Update verfügbar",
+    "icon": "OriaSSH-App-Symbol",
     "version": "Version {{version}}",
     "copyright": "© {{year}} KrisLee",
     "website": "Website",

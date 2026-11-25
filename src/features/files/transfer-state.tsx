@@ -2,6 +2,7 @@ import { createContext, useContext } from "react";
 import { Files } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { active, type Task } from "./api";
+import { transferDisplayPhase } from "./transfer-list";
 
 export type FileActivity = {
   id: string;
@@ -49,9 +50,11 @@ export function projectFileActivities(
         targetName:
           task.targetRemote?.hostName || (targetId ? task.hostName : null),
         phase:
-          task.directPending && !active(task) ? "directUnknown" : task.phase,
+          task.directPending && !active(task)
+            ? "directUnknown"
+            : transferDisplayPhase(task),
         filename:
-          (task.destination || task.sources[0] || "").split(/[\\/]/).pop() ||
+          (task.sources[0] || task.destination || "").split(/[\\/]/).pop() ||
           "",
         relay:
           task.direction === "relay" &&

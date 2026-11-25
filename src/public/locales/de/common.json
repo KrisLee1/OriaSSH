@@ -93,7 +93,7 @@
     "showDescription": "Beschreibung anzeigen"
   },
   "initialPreferences": {
-    "title": "Willkommen bei OriaTunnel",
+    "title": "Willkommen bei OriaSSH",
     "description": "Wähle deine Einstellungen. Du kannst sie später in den Einstellungen ändern.",
     "done": "Loslegen",
     "saveFailed": "Der Abschluss konnte nicht gespeichert werden. Dieser Dialog erscheint beim nächsten Start erneut."

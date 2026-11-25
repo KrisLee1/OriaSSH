@@ -13,10 +13,12 @@ import {
 export function ActivityList({
   rows,
   grouping,
+  showHost = false,
   viewport,
 }: {
   rows: ActivityRow[];
   grouping: ActivityGrouping;
+  showHost?: boolean;
   viewport: HTMLDivElement | null;
 }) {
   const { t, i18n } = useTranslation("tunnel");
@@ -79,8 +81,80 @@ export function ActivityList({
   }, [viewport, hasMore, loaded.length, items.length, view.height]);
   const hostName = (row: ActivityRow) =>
     row.host?.name || row.hostId || t("unknownLogHost");
-  const forwardName = (row: ActivityRow) =>
-    row.hostTest ? t("testConnection") : row.rule?.name || row.record.ruleId;
+  function forwardLabel(row: ActivityRow) {
+    if (row.hostTest) return t("testConnection");
+    return row.rule?.name || row.record.ruleId;
+  }
+  function renderEntry(row: ActivityRow) {
+    const { record, rule, services, status } = row;
+    const serviceNames = services.map(({ name }) => name);
+    const title =
+      serviceNames.join(" · ") ||
+      forwardLabel(row) ||
+      t("services", { ns: "commands" });
+    const forward =
+      services.length && rule?.name && !serviceNames.includes(rule.name)
+        ? rule.name
+        : undefined;
+    const context = [
+      forward,
+      showHost ? hostName(row) : undefined,
+      record.username,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    const time = new Date(record.timestamp);
+    const runLabel = record.runId
+      .slice(record.runId.lastIndexOf(":") + 1)
+      .slice(0, 8);
+    const statusLabel = t(status.label);
+    const eventLabel = t(record.event);
+
+    return (
+      <article className="activity-virtual-entry themed-surface">
+        <div className="activity-entry-heading">
+          <strong className="activity-entry-title" title={title}>
+            {title}
+          </strong>
+          <time dateTime={time.toISOString()}>
+            {time.toLocaleString(i18n.resolvedLanguage)}
+          </time>
+        </div>
+        <div className="activity-entry-meta">
+          <div className="activity-entry-event">
+            <span className={`status tone-${status.tone}`}>
+              <i aria-hidden="true" />
+              <span
+                className="activity-entry-status"
+                title={
+                  statusLabel === eventLabel
+                    ? statusLabel
+                    : `${statusLabel} · ${eventLabel}`
+                }
+              >
+                {statusLabel}
+              </span>
+            </span>
+            {context && (
+              <span className="activity-entry-context" title={context}>
+                {context}
+              </span>
+            )}
+          </div>
+          <div className="activity-entry-run">
+            {record.retryCount > 0 && (
+              <span>
+                {t("retryCount")} {record.retryCount}
+              </span>
+            )}
+            {runLabel && (
+              <span title={`${t("runId")} ${record.runId}`}>{runLabel}</span>
+            )}
+          </div>
+        </div>
+      </article>
+    );
+  }
   return (
     <>
       <div
@@ -95,6 +169,7 @@ export function ActivityList({
             key={item.key}
             style={{ height: item.height }}
             className="activity-virtual-row"
+            role="listitem"
           >
             {item.kind === "group" ? (
               <button
@@ -114,70 +189,27 @@ export function ActivityList({
                   size={14}
                   className={closed.has(item.groupId) ? "" : "rotate-90"}
                 />
-                <span
-                  title={
-                    grouping === "host"
-                      ? hostName(item.row)
-                      : grouping === "forward"
-                        ? forwardName(item.row)
-                        : t(item.groupId)
-                  }
-                >
-                  {grouping === "host"
-                    ? hostName(item.row)
-                    : grouping === "forward"
-                      ? forwardName(item.row)
-                      : t(item.groupId)}
+                <span>
+                  {grouping === "forward"
+                    ? forwardLabel(item.row) || t("noLogForward")
+                    : t(item.groupId)}
                 </span>
                 <small>{item.count}</small>
               </button>
             ) : (
-              <article
-                className="activity-virtual-entry themed-surface"
-                role="listitem"
-              >
-                <div className="activity-entry-heading">
-                  <strong
-                    className={`status tone-${item.row.status.tone}`}
-                    title={t(item.row.record.event)}
-                  >
-                    <i />
-                    {t(item.row.status.label)}
-                  </strong>
-                  <time
-                    dateTime={new Date(item.row.record.timestamp).toISOString()}
-                  >
-                    {new Date(item.row.record.timestamp).toLocaleString(
-                      i18n.resolvedLanguage,
-                    )}
-                  </time>
-                </div>
-                <div className="activity-entry-meta">
-                  <span
-                    title={`${hostName(item.row)} · ${forwardName(item.row)}`}
-                  >
-                    {hostName(item.row)} · {forwardName(item.row)}
-                  </span>
-                  <small title={item.row.record.runId}>
-                    {t("retryCount")} {item.row.record.retryCount} ·{" "}
-                    {item.row.record.runId.slice(0, 8)}
-                  </small>
-                </div>
-              </article>
+              renderEntry(item.row)
             )}
           </div>
         ))}
         <div style={{ height: range.after }} aria-hidden="true" />
       </div>
-      <div ref={sentinelRef} className="activity-load-more">
-        {hasMore ? (
+      {hasMore && (
+        <div ref={sentinelRef} className="activity-load-more">
           <Button size="sm" variant="ghost" onClick={showMore}>
             {t("loadMoreLogs")}
           </Button>
-        ) : (
-          <small>{t("allLogsLoaded", { count: rows.length })}</small>
-        )}
-      </div>
+        </div>
+      )}
     </>
   );
 }

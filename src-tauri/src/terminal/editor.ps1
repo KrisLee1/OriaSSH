@@ -15,8 +15,10 @@ function global:Write-OriaReply([string]$kind, [string]$revision, [string[]]$fie
 }
 try {
     $null = Get-PSReadLineOption -ErrorAction Stop
-    if ($env:ORIATUNNEL_TEST_DATA_DIR) {
-        $testHistory = Join-Path $env:ORIATUNNEL_TEST_DATA_DIR 'ConsoleHost_history.txt'
+    $testDataDir = $env:ORIASSH_TEST_DATA_DIR
+    if (!$testDataDir) { $testDataDir = $env:ORIATUNNEL_TEST_DATA_DIR }
+    if ($testDataDir) {
+        $testHistory = Join-Path $testDataDir 'ConsoleHost_history.txt'
         Set-PSReadLineOption -HistorySavePath $testHistory -ErrorAction Stop
     }
     # PSReadLine loads its history on the first native read. Finish an empty
@@ -130,6 +132,7 @@ function global:PSConsoleHostReadLine {
                     if ($op -ne 'list') {
                         $kind = 'matches'
                         $at = $value.LastIndexOfAny([char[]]'\/')
+                        if ($at -lt 0 -and $value -match '^[a-z]:') { $at = 1 }
                         $dir = if ($at -lt 0) { '.' } else { $value.Substring(0, $at + 1) }
                         $prefix = $value.Substring($at + 1)
                     }

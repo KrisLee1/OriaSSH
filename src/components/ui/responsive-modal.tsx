@@ -1,6 +1,6 @@
 "use client"
 
-import { createContext, useContext, useMemo, type ReactElement, type ReactNode } from 'react';
+import { createContext, useContext, useMemo, type ReactElement, type ReactNode, type RefObject } from 'react';
 import { usePresence } from "motion/react";
 import { useIsMobile } from "@/hooks/use-media-query";
 import { Button } from "@/components/ui/button";
@@ -39,10 +39,12 @@ function useResponsiveModal() {
 function ResponsiveModal({
   open,
   onOpenChange,
+  disablePointerDismissal,
   children,
 }: {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  disablePointerDismissal?: boolean;
   children?: ReactNode;
 }) {
   const isMobile = useIsMobile();
@@ -55,11 +57,11 @@ function ResponsiveModal({
   return (
     <ResponsiveModalContext.Provider value={contextValue}>
       {isMobile ? (
-        <Drawer open={isPresent ? open : false} onOpenChange={onOpenChange} onOpenChangeComplete={finishClose} swipeDirection="down">
+        <Drawer open={isPresent ? open : false} onOpenChange={onOpenChange} onOpenChangeComplete={finishClose} disablePointerDismissal={disablePointerDismissal} swipeDirection="down">
           {children}
         </Drawer>
       ) : (
-        <Dialog open={isPresent ? open : false} onOpenChange={onOpenChange} onOpenChangeComplete={finishClose}>
+        <Dialog open={isPresent ? open : false} onOpenChange={onOpenChange} onOpenChangeComplete={finishClose} disablePointerDismissal={disablePointerDismissal}>
           {children}
         </Dialog>
       )}
@@ -81,16 +83,18 @@ function ResponsiveModalTrigger({
 function ResponsiveModalContent({
   className,
   children,
+  initialFocus,
 }: {
   className?: string;
   children?: ReactNode;
+  initialFocus?: RefObject<HTMLElement | null>;
 }) {
   const { isMobile } = useResponsiveModal();
   const { t } = useTranslation();
   const layoutClassName = "responsive-modal-surface mx-auto flex min-h-0 max-h-[calc(100dvh-var(--aide-chrome-top)-2rem)] w-[calc(100%-2rem)] flex-col";
   return isMobile
-    ? <DrawerContent className={cn("floating-surface modal-surface m-1.5 gap-0 overflow-hidden rounded-xl shadow-md after:hidden", layoutClassName, className)}>{children}</DrawerContent>
-    : <DialogContent closeLabel={t("modal.close")} className={cn("min-w-2xs gap-0 overflow-hidden p-0", layoutClassName, className)}>{children}</DialogContent>;
+    ? <DrawerContent initialFocus={initialFocus} className={cn("floating-surface modal-surface m-1.5 gap-0 overflow-hidden rounded-xl shadow-md after:hidden", layoutClassName, className)}>{children}</DrawerContent>
+    : <DialogContent initialFocus={initialFocus} closeLabel={t("modal.close")} className={cn("min-w-2xs gap-0 overflow-hidden p-0", layoutClassName, className)}>{children}</DialogContent>;
 }
 
 function ResponsiveModalHeader({

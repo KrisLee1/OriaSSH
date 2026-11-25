@@ -1,7 +1,9 @@
 import { PageEmptyState } from "@/components/page-empty-state";
-import { Monitor, Server, SquarePlusIcon, SquareTerminal } from "lucide-react";
+import { Monitor, SquarePlusIcon, SquareTerminal } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { HostIcon } from "@/features/hosts/host-icon";
+import { resolvedDefaultLogin } from "@/features/hosts/login-identities";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,14 +26,20 @@ export function TerminalTargets({
   const { t } = useTranslation("terminal");
   const targets = [null, ...hosts].map((host) => {
     const label = host?.name ?? t("localTerminal");
-    const endpoint = host ? `${host.user}@${host.address}:${host.port}` : "";
+    const login = resolvedDefaultLogin(host ?? undefined);
+    const endpoint = login ? `${login.user}@${login.address}:${login.port}` : "";
     const content = (
       <>
-        {host ? (
-          <Server size={16} aria-hidden="true" />
-        ) : (
-          <Monitor size={16} aria-hidden="true" />
-        )}
+        <span
+          className="grid size-5 shrink-0 place-items-center"
+          aria-hidden="true"
+        >
+          {host ? (
+            <HostIcon appearance={host.appearance} />
+          ) : (
+            <Monitor size={16} />
+          )}
+        </span>
         <span className="terminal-target-text">
           <span>{label}</span>
           {endpoint && <small>{endpoint}</small>}
@@ -46,7 +54,7 @@ export function TerminalTargets({
       className: "terminal-target",
     };
     return menu ? (
-      <DropdownMenuItem key={host?.id ?? ""} {...props}>
+      <DropdownMenuItem key={host?.id ?? ""} label={label} {...props}>
         {content}
       </DropdownMenuItem>
     ) : (

@@ -1,6 +1,10 @@
 //! Export a portable allowlist, never the internal config/trust/runtime document.
-use crate::model::{rule_uses_host, Host, Snapshot};
+use crate::config_import::{self, MAX_HOSTS, MAX_RULES, MAX_SERVICES};
+use crate::model::{rule_uses_host, Host, Rule, Snapshot};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
 pub fn package(
     snapshot: &Snapshot,
     ids: &[String],
@@ -29,23 +33,41 @@ pub fn package(
         })
         .map(|h| portable_host(h, include_key_paths))
         .collect();
-    let rules:Vec<_>=rules.iter().map(|r|json!({
-        "id":r.id,"name":r.name,"color":r.color,"icon":r.icon,"serviceProtocol":r.service_protocol,"hostId":r.host_id,"kind":r.kind,"bindAddress":r.bind_address,"bindPort":r.bind_port,
-        "targetHost":r.target_host,"targetPort":r.target_port,"connection":r.connection,"background":r.background,
-        "reconnect":r.reconnect,"noRemoteCommand":r.no_remote_command,"remoteCommandOmitted":!r.no_remote_command,
-        "autoConnect":false,"repeatCommandOnReconnect":false,
-    })).collect();
+    let rules: Vec<_> = rules.into_iter().map(portable_rule).collect();
     Ok(
-        json!({"format":"oria-tunnel","version":1,"hosts":hosts,"rules":rules,"credentialsIncluded":false,"runtimeIncluded":false}),
+        json!({"format":"oria-ssh","version":1,"hosts":hosts,"rules":rules,"credentialsIncluded":false,"runtimeIncluded":false}),
     )
 }
-fn portable_host(h: &Host, include_key_paths: bool) -> Value {
+fn portable_rule(r: &Rule) -> Value {
     json!({
+        "id":r.id,"name":r.name,"color":r.color,"icon":r.icon,"serviceProtocol":r.service_protocol,
+        "hostId":r.host_id,"kind":r.kind,"bindAddress":r.bind_address,"bindPort":r.bind_port,
+        "targetHost":r.target_host,"targetPort":r.target_port,"connection":r.connection,
+        "background":r.background,"reconnect":r.reconnect,"noRemoteCommand":r.no_remote_command,
+        "remoteCommandOmitted":!r.no_remote_command,"autoConnect":false,"repeatCommandOnReconnect":false,
+    })
+}
+fn portable_host(h: &Host, include_key_paths: bool) -> Value {
+    let mut host = json!({
         "id":h.id,"name":h.name,"address":h.address,"port":h.port,"user":h.user,"authMethod":h.auth_method,
         "tags":h.tags,"connection":h.connection,"proxyJump":h.proxy_jump,"identitiesOnly":h.identities_only,"algorithms":h.algorithms,
         "identityFiles":if include_key_paths {h.identity_files.clone()}else{Vec::new()},
-        "identityFilesOmitted":!include_key_paths&&!h.identity_files.is_empty(),"connectionBlocked":!h.diagnostics.is_empty()
-    })
+        "identityFilesOmitted":!include_key_paths&&(!h.identity_files.is_empty() || h.logins.iter().any(|l|!l.identity_files.is_empty())),"connectionBlocked":!h.diagnostics.is_empty()
+    });
+    if !h.logins.is_empty() {
+        let mut logins = h.logins.clone();
+        if !include_key_paths {
+            for login in &mut logins {
+                login.identity_files.clear();
+            }
+        }
+        host["logins"] = json!(logins);
+        host["defaultLoginId"] = json!(h.default_login_id);
+    }
+    if let Some(appearance) = &h.appearance {
+        host["appearance"] = json!(appearance);
+    }
+    host
 }
 pub fn package_with_services(
     snapshot: &Snapshot,
@@ -71,7 +93,7 @@ pub fn package_with_services(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let mut value = if ids.is_empty() {
-        json!({"format":"oria-tunnel","version":1,"hosts":[],"rules":[],"credentialsIncluded":false,"runtimeIncluded":false})
+        json!({"format":"oria-ssh","version":1,"hosts":[],"rules":[],"credentialsIncluded":false,"runtimeIncluded":false})
     } else {
         package(snapshot, ids, include_key_paths)?
     };
@@ -108,11 +130,7 @@ pub fn package_with_services(
             .iter()
             .filter(|id| hosts.iter().any(|h| h["id"].as_str() == Some(id)))
             .collect();
-        let mut profile = json!({"id":service.id,"name":service.name,"category":service.category,"color":service.color,"icon":service.icon,"port":service.port,"executionHostId":"","hostIds":host_ids,"ruleIds":links,"noLocalEnvironment":service.no_local_environment,"actions":service.actions,"control":service.control});
-        if let Some(protocol) = service.direct_protocol {
-            profile["directProtocol"] = json!(protocol);
-        }
-        profiles.push(profile);
+        profiles.push(portable_service(service, host_ids, links));
     }
     value["version"] = json!(2);
     value["hosts"] = json!(hosts);
@@ -129,7 +147,249 @@ pub fn package_with_services(
     crate::config_import::parse(&serde_json::to_vec(&value).map_err(|_| "invalidServicePackage")?)?;
     Ok(value)
 }
+fn portable_service(
+    service: &crate::commands::Service,
+    host_ids: Vec<&String>,
+    rule_ids: Vec<&String>,
+) -> Value {
+    let mut value = json!({
+        "id":service.id,"name":service.name,"category":service.category,"color":service.color,
+        "icon":service.icon,"port":service.port,"executionHostId":"","hostIds":host_ids,
+        "ruleIds":rule_ids,"noLocalEnvironment":service.no_local_environment,
+        "actions":service.actions,"control":service.control,
+    });
+    if !service.login_by_host.is_empty() {
+        value["loginByHost"] = json!(service
+            .login_by_host
+            .iter()
+            .filter(|(host, _)| host_ids.contains(host))
+            .collect::<BTreeMap<_, _>>());
+    }
+    if let Some(protocol) = service.direct_protocol {
+        value["directProtocol"] = json!(protocol);
+    }
+    value
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkspaceSelection {
+    pub host_ids: Vec<String>,
+    pub rule_ids: Vec<String>,
+    pub service_ids: Vec<String>,
+    pub include_service_commands: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspacePreview {
+    pub fingerprint: String,
+    pub hosts: Vec<ExportHost>,
+    pub service_count: usize,
+    pub rule_count: usize,
+    pub logins: Vec<ExportLogin>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportLogin {
+    id: String,
+    label: String,
+    user: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportHost {
+    id: String,
+    name: String,
+    endpoint: String,
+    dependency: bool,
+}
+
+pub fn workspace(
+    snapshot: &Snapshot,
+    selection: &WorkspaceSelection,
+) -> Result<(Value, WorkspacePreview), String> {
+    let invalid = || crate::native_message::plain("exportSelectionInvalid");
+    let host_ids = selection
+        .host_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let rule_ids = selection
+        .rule_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let service_ids = selection
+        .service_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    if host_ids.len() != selection.host_ids.len()
+        || rule_ids.len() != selection.rule_ids.len()
+        || service_ids.len() != selection.service_ids.len()
+        || host_ids
+            .iter()
+            .any(|id| !snapshot.added_host_ids.iter().any(|added| added == id))
+        || (host_ids.is_empty() && rule_ids.is_empty() && service_ids.is_empty())
+    {
+        return Err(invalid());
+    }
+    if host_ids.len() > MAX_HOSTS || rule_ids.len() > MAX_RULES || service_ids.len() > MAX_SERVICES
+    {
+        return Err(crate::native_message::plain("configLimits"));
+    }
+    let rules = snapshot
+        .rules
+        .iter()
+        .filter(|rule| rule_ids.contains(rule.id.as_str()))
+        .collect::<Vec<_>>();
+    let services = snapshot
+        .services
+        .iter()
+        .filter(|service| service_ids.contains(service.id.as_str()))
+        .collect::<Vec<_>>();
+    if rules.len() != rule_ids.len() || services.len() != service_ids.len() {
+        return Err(invalid());
+    }
+    if !selection.include_service_commands
+        && services
+            .iter()
+            .any(|service| !service.actions.is_empty() || service.control.health_probe.is_some())
+    {
+        return Err(crate::native_message::plain("exportCommandsRequired"));
+    }
+    let hosts = snapshot
+        .hosts
+        .iter()
+        .map(|host| (host.id.as_str(), host))
+        .collect::<BTreeMap<_, _>>();
+    let mut required = BTreeSet::new();
+    let mut pending = host_ids
+        .iter()
+        .copied()
+        .chain(rules.iter().map(|rule| rule.host_id.as_str()))
+        .chain(
+            services
+                .iter()
+                .flat_map(|service| service.host_ids.iter().map(String::as_str)),
+        )
+        .collect::<Vec<_>>();
+    while let Some(id) = pending.pop() {
+        if !required.insert(id) {
+            continue;
+        }
+        let host = hosts.get(id).ok_or_else(invalid)?;
+        if let Some(jumps) = &host.proxy_jump {
+            pending.extend(jumps.split(',').map(str::trim));
+        }
+    }
+    if required.len() > MAX_HOSTS {
+        return Err(crate::native_message::plain("configLimits"));
+    }
+    let mut projected = Vec::new();
+    let mut preview_hosts = Vec::new();
+    let mut credential_ids = BTreeSet::new();
+    for id in required {
+        let host = hosts[id];
+        let mut value = portable_host(host, false);
+        let local = host
+            .logins
+            .iter()
+            .filter(|login| !host.credential_ids.contains(&login.id))
+            .cloned()
+            .map(|mut login| {
+                login.identity_files.clear();
+                login
+            })
+            .collect::<Vec<_>>();
+        value["logins"] = json!(local);
+        value["defaultLoginId"] = json!(host.default_login_id);
+        value["credentialIds"] = json!(host.credential_ids);
+        value["credentialOnly"] = json!(host.credential_only);
+        value["primaryLoginLabel"] = json!(host.primary_login_label);
+        credential_ids.extend(host.credential_ids.iter().map(String::as_str));
+        projected.push(value);
+        preview_hosts.push(ExportHost {
+            id: host.id.clone(),
+            name: host.name.clone(),
+            endpoint: format!("{}@{}:{}", host.user, host.address, host.port),
+            dependency: !host_ids.contains(id),
+        });
+    }
+    let catalog = snapshot
+        .login_credentials
+        .iter()
+        .map(|login| (login.id.as_str(), login))
+        .collect::<BTreeMap<_, _>>();
+    let login_credentials = credential_ids
+        .into_iter()
+        .map(|id| {
+            let mut login = (*catalog.get(id).ok_or_else(invalid)?).clone();
+            login.identity_files.clear();
+            Ok(login)
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let profiles = services
+        .iter()
+        .map(|service| {
+            portable_service(
+                service,
+                service.host_ids.iter().collect(),
+                service
+                    .rule_ids
+                    .iter()
+                    .filter(|id| rule_ids.contains(id.as_str()))
+                    .collect(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let value = json!({
+        "format":"oria-ssh","version":3,"hosts":projected,
+        "rules":rules.into_iter().map(portable_rule).collect::<Vec<_>>(),
+        "services":profiles,"loginCredentials":login_credentials,
+        "selectedHostIds":host_ids,"credentialsIncluded":false,"runtimeIncluded":false,
+    });
+    let bytes = serde_json::to_vec_pretty(&value).map_err(|_| invalid())?;
+    config_import::parse(&bytes)?;
+    let preview = WorkspacePreview {
+        fingerprint: format!("{:x}", Sha256::digest(&bytes)),
+        hosts: preview_hosts,
+        service_count: service_ids.len(),
+        rule_count: rule_ids.len(),
+        logins: login_credentials
+            .into_iter()
+            .map(|login| ExportLogin {
+                id: login.id,
+                label: login.label,
+                user: login.user,
+            })
+            .collect(),
+    };
+    Ok((value, preview))
+}
+
+pub fn reviewed_workspace(
+    snapshot: &Snapshot,
+    selection: &WorkspaceSelection,
+    fingerprint: &str,
+) -> Result<Value, String> {
+    let (value, preview) = workspace(snapshot, selection)?;
+    if preview.fingerprint == fingerprint {
+        Ok(value)
+    } else {
+        Err(crate::native_message::plain("exportPreviewChanged"))
+    }
+}
+
 pub fn write(path: &std::path::Path, value: &Value) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(value)
+        .map_err(|_| crate::native_message::plain("exportFailed"))?;
+    if bytes.len() > config_import::MAX_BYTES {
+        return Err(crate::native_message::plain("configTooLarge"));
+    }
     let temp = path.with_file_name(format!(".oria-export-{}.tmp", uuid::Uuid::new_v4()));
     let result = (|| {
         use std::io::Write;
@@ -137,7 +397,7 @@ pub fn write(path: &std::path::Path, value: &Value) -> Result<(), String> {
             .create_new(true)
             .write(true)
             .open(&temp)?;
-        f.write_all(&serde_json::to_vec_pretty(value)?)?;
+        f.write_all(&bytes)?;
         f.sync_all()?;
         drop(f);
         std::fs::rename(&temp, path)

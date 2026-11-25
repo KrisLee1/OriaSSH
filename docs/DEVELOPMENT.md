@@ -1,4 +1,4 @@
-# OriaTunnel 开发指南
+# OriaSSH 开发指南
 
 本指南用于在另一台 Windows 或 macOS 设备上继续开发。日常使用说明见 [使用指南](USAGE.md)，当前进度与验证边界见 [项目状态](PROJECT_STATUS.md)。
 
@@ -10,12 +10,14 @@
 | --------------------------------------- | ---------------------------------------------------------- |
 | [AGENTS.md](../AGENTS.md)               | 项目工作规则、SSH 与凭据约束、提交和发布范围               |
 | [项目状态](PROJECT_STATUS.md)           | 当前实现、最近修改、验证证据与待验证范围                   |
-| [产品与界面设计](ORIA_TUNNEL_DESIGN.md) | 产品方向、阶段方案及架构背景；实际行为以源码和项目状态为准 |
+| [产品与界面设计](ORIA_SSH_DESIGN.md) | 产品方向、阶段方案及架构背景；实际行为以源码和项目状态为准 |
 | [UI 开发入口](ui-development.md)        | 组件复用、主题、窗口、交互和多语言规则                     |
 | [组件索引](ui/components/index.md)      | 查找现有组件及业务组合入口                                 |
 | [外壳迁移清单](shell-migration.json)    | 原版外壳的迁移来源与摘要                                   |
 
 这些文档随仓库跟踪。`outputs/` 中的截图、验证夹具、备份和日志属于本机产物，不随仓库同步；项目状态中的历史路径只是证据位置，不是克隆仓库后必然存在的文件。
+
+功能方案统一放在 `docs/changes/`。文件名采用 `C001-主题词.md` 格式，使用大写 C、三位顺序号和连字符分隔的小写英文主题词。新方案取下一个编号，已分配的编号保持固定。例如 [C003-file-transfer.md](changes/C003-file-transfer.md)。文档一级标题统一为「主题 + 方案」。
 
 ## 环境准备
 
@@ -51,16 +53,16 @@ DEVELOPER_DIR=/Library/Developer/CommandLineTools pnpm tauri dev
 
 | 环境变量                     | 作用                                                   |
 | ---------------------------- | ------------------------------------------------------ |
-| `ORIATUNNEL_TEST_DATA_DIR`   | 使用独立应用数据目录，隔离连接配置、信任记录和单实例锁 |
-| `ORIATUNNEL_TEST_SSH_CONFIG` | 只从指定 SSH 配置文件发现主机，替代默认和附加来源      |
+| `ORIASSH_TEST_DATA_DIR`   | 使用独立应用数据目录，隔离连接配置、信任记录和单实例锁 |
+| `ORIASSH_TEST_SSH_CONFIG` | 只从指定 SSH 配置文件发现主机，替代默认和附加来源      |
 
 macOS 可创建一个空 SSH 配置后启动独立调试数据环境：
 
 ```sh
 mkdir -p outputs/dev-profile
 : > outputs/dev-profile/ssh_config
-ORIATUNNEL_TEST_DATA_DIR="$PWD/outputs/dev-profile/data" \
-ORIATUNNEL_TEST_SSH_CONFIG="$PWD/outputs/dev-profile/ssh_config" \
+ORIASSH_TEST_DATA_DIR="$PWD/outputs/dev-profile/data" \
+ORIASSH_TEST_SSH_CONFIG="$PWD/outputs/dev-profile/ssh_config" \
 pnpm tauri dev
 ```
 
@@ -69,8 +71,8 @@ Windows PowerShell 对应写法：
 ```powershell
 New-Item -ItemType Directory -Force outputs/dev-profile | Out-Null
 Set-Content -Path outputs/dev-profile/ssh_config -Value ''
-$env:ORIATUNNEL_TEST_DATA_DIR = Join-Path $PWD 'outputs/dev-profile/data'
-$env:ORIATUNNEL_TEST_SSH_CONFIG = Join-Path $PWD 'outputs/dev-profile/ssh_config'
+$env:ORIASSH_TEST_DATA_DIR = Join-Path $PWD 'outputs/dev-profile/data'
+$env:ORIASSH_TEST_SSH_CONFIG = Join-Path $PWD 'outputs/dev-profile/ssh_config'
 pnpm tauri dev
 ```
 
@@ -104,7 +106,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 
 SSH 配置语义对照测试还需要系统 OpenSSH 客户端，使用独立配置文件执行 `ssh -G -F`，不登录真实主机。
 
-服务命令的 POSIX 引用、模板语法及回环服务测试在 Windows 使用 Git for Windows 自带的 `sh.exe`，通过 `git --exec-path` 定位；非标准安装可设置 `ORIATUNNEL_TEST_SH` 为完整 Shell 路径。它们验证的是远端 POSIX 命令，不能改用 `cmd.exe` 解释。生产应用不会调用该测试 Shell，也不会在本机执行配置或服务命令。
+服务命令的 POSIX 引用、模板语法及回环服务测试在 Windows 使用 Git for Windows 自带的 `sh.exe`，通过 `git --exec-path` 定位；非标准安装可设置 `ORIASSH_TEST_SH` 为完整 Shell 路径。它们验证的是远端 POSIX 命令，不能改用 `cmd.exe` 解释。生产应用不会调用该测试 Shell，也不会在本机执行配置或服务命令。
 
 Windows 的 `build.rs` 统一由链接器嵌入 Common Controls v6 清单，覆盖主程序、库测试、集成测试及示例；Tauri 仍生成图标和版本资源。不要同时恢复 Tauri 资源中的默认清单和链接器清单，否则会产生重复的 MANIFEST 资源。更新验签夹具 `src-tauri/tests/fixtures/updater/payload.txt` 由仓库 `.gitattributes` 禁止换行转换，必须保持原始签名字节。
 
@@ -116,11 +118,11 @@ Windows 的 `build.rs` 统一由链接器嵌入 Common Controls v6 清单，覆�
 
 | 目标                | 命令                           | 主要输出                                               |
 | ------------------- | ------------------------------ | ------------------------------------------------------ |
-| Windows 独立 EXE    | `pnpm tauri build --no-bundle` | `src-tauri/target/release/oria-tunnel.exe`             |
+| Windows 独立 EXE    | `pnpm tauri build --no-bundle` | `src-tauri/target/release/oria-ssh.exe`             |
 | Windows NSIS 安装器 | `pnpm package:win`             | `src-tauri/target/release/bundle/nsis/`                |
-| macOS 独立应用      | `pnpm tauri build`             | `src-tauri/target/release/bundle/macos/OriaTunnel.app` |
+| macOS 独立应用      | `pnpm tauri build`             | `src-tauri/target/release/bundle/macos/OriaSSH.app` |
 | macOS DMG 与 ZIP    | `pnpm package:mac`             | `src-tauri/target/release/bundle/dmg/`                 |
-| macOS 签名、公证 App / DMG / ZIP | `pnpm package:mac:signed` | 同上，另有 `bundle/macos/OriaTunnel.app` |
+| macOS 签名、公证 App / DMG / ZIP | `pnpm package:mac:signed` | 同上，另有 `bundle/macos/OriaSSH.app` |
 | macOS Intel 签名、公证 App / DMG / ZIP | `pnpm package:mac:signed --target x86_64-apple-darwin` | `src-tauri/target/x86_64-apple-darwin/release/bundle/` |
 
 使用 Tauri 构建命令嵌入前端，普通 `cargo build --release` 不能代替独立桌面应用构建。macOS 的 `pnpm tauri build --debug` 可生成支持上述调试数据目录的 app。
@@ -160,7 +162,7 @@ xcrun notarytool store-credentials "OriaTunnel-notary" \
 pnpm package:mac:signed
 ```
 
-脚本自动选择团队 `67577AA9ZH` 的有效 Developer ID Application 身份；存在多个身份时，用 `APPLE_SIGNING_IDENTITY` 指定完整证书名称。`ORIATUNNEL_APPLE_TEAM_ID` 可覆盖团队，`ORIATUNNEL_NOTARY_PROFILE` 可覆盖钥匙串配置名。脚本只通过 `notarytool --keychain-profile` 使用凭据，不读取或打印密码正文。
+脚本自动选择团队 `67577AA9ZH` 的有效 Developer ID Application 身份；存在多个身份时，用 `APPLE_SIGNING_IDENTITY` 指定完整证书名称。`ORIASSH_APPLE_TEAM_ID` 可覆盖团队，`ORIASSH_NOTARY_PROFILE` 可覆盖钥匙串配置名。脚本只通过 `notarytool --keychain-profile` 使用凭据，不读取或打印密码正文。
 
 此入口默认构建当前 Mac 的原生架构 release，也接受 `--target x86_64-apple-darwin`（Intel）或 `--target aarch64-apple-darwin`（Apple Silicon）。首次跨架构构建先安装对应 Rust 目标；例如在 Apple Silicon Mac 构建 Intel 版：
 
@@ -173,7 +175,7 @@ pnpm package:mac:signed --target x86_64-apple-darwin
 
 脚本启用 Hardened Runtime，并在提交公证前核对 App 二进制架构及签名。上传 App 公证并装订票据后，将带票据的 App 放入 DMG；卷图标与 Finder 图标处理完成后，对最终 DMG 重新签名、公证和装订，最后生成保留图标元数据的 ZIP。App 与 DMG 均通过 `codesign`、`stapler` 和 Gatekeeper 检查后才报告成功。签名入口不生成自动更新压缩包，也不创建或发布 GitHub Release。交叉构建及公证成功不等于已在对应架构的实体设备上完成运行验收。
 
-公证需要联网，Apple 的处理时间不固定。每次公证默认等待 15 分钟，`ORIATUNNEL_NOTARY_TIMEOUT` 可指定如 `30m`；超时不会取消 Apple 服务器上的任务。提交 ID 与结果保存在忽略目录 `outputs/macos-signing/`。先用原提交 ID 查询或继续等待，避免重复上传；`SUBMISSION_ID` 替换为提交收据中的 ID：
+公证需要联网，Apple 的处理时间不固定。每次公证默认等待 15 分钟，`ORIASSH_NOTARY_TIMEOUT` 可指定如 `30m`；超时不会取消 Apple 服务器上的任务。提交 ID 与结果保存在忽略目录 `outputs/macos-signing/`。先用原提交 ID 查询或继续等待，避免重复上传；`SUBMISSION_ID` 替换为提交收据中的 ID：
 
 ```sh
 xcrun notarytool info SUBMISSION_ID --keychain-profile "OriaTunnel-notary"
@@ -206,7 +208,7 @@ pnpm tauri build --bundles app,dmg --config src-tauri/tauri.updater.conf.json
 
 上述为手动发布构建入口；云端自动构建和发布使用 [发布指南](RELEASING.md) 的工作流。不要把私钥或口令写入命令行、仓库、日志或测试产物；macOS 发布还需保留现有 `scripts/package-mac.sh` 的图标处理及 ZIP 包装流程。更新压缩包为 `.app.tar.gz`，不是现有的 DMG ZIP。
 
-已启用 `requireSignedVersion`，使用支持版本绑定的锁定 Tauri CLI 构建。手动签名更新包时需提供 `--app-version`，使其与清单版本一致；清单只提供更高版本的稳定版。升级与验收计划见 [应用更新方案](APP_UPDATE_PLAN.md)。
+已启用 `requireSignedVersion`，使用支持版本绑定的锁定 Tauri CLI 构建。手动签名更新包时需提供 `--app-version`，使其与清单版本一致；清单只提供更高版本的稳定版。升级与验收计划见 [应用更新方案](changes/C001-app-update.md)。
 
 Windows 静态清单按已安装二进制架构提供 `windows-x86_64-nsis` / `windows-aarch64-nsis`（插件也支持相应不带 `-nsis` 的回退键）；x64 程序在 ARM64 仿真下仍使用 x64 更新包，缺少本架构时不改取另一架构。下载后验签并绑定版本，安装前再次验签；安装先确认并清理实际活动任务，再交给插件启动 NSIS 被动安装。只有 release NSIS 形态启用 Windows 更新，debug 安装包仍禁用。首次发布前须部署可访问的 `latest.json`、对应安装包及版本绑定签名；本地打包成功不代表更新发布端已就绪。保留隔离 QA 标识的本地修正版用于原安装覆盖，不能替代默认生产标识的公开发布验收。
 
@@ -330,7 +332,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --test commands_exec sustained_r
 pnpm test src/features/commands
 ```
 
-压力测试与服务端夹具运行在同一进程，记录的 RSS 峰值包含两者和分配器，不能当作应用常驻内存承诺；尾部字节预算另逐轮断言。当前完成分钟级持续压力与千次执行，尚未进行小时级运行或 Windows 原生内存验收。手动 QA 必须同时指定 `ORIATUNNEL_TEST_DATA_DIR` 和 `ORIATUNNEL_TEST_SSH_CONFIG` 的隔离路径，不连接用户真实主机。
+压力测试与服务端夹具运行在同一进程，记录的 RSS 峰值包含两者和分配器，不能当作应用常驻内存承诺；尾部字节预算另逐轮断言。当前完成分钟级持续压力与千次执行，尚未进行小时级运行或 Windows 原生内存验收。手动 QA 必须同时指定 `ORIASSH_TEST_DATA_DIR` 和 `ORIASSH_TEST_SSH_CONFIG` 的隔离路径，不连接用户真实主机。
 
 服务分类为可选 category，目录 ID 清单在 `src/features/commands/service-category-ids.json`，Rust 内嵌校验，前端测试核对与模板分类一致；other 表示明确未分类。模板保存/分享保留分类，旧配置无字段仍可读取。批量删除通过 delete_service_profiles 接收 id/revision 列表，在 workers 锁下核对全部范围/活动任务/修订，克隆配置后一次持久化；任一错误不部分删除，单条接口复用相同事务。
 
@@ -345,4 +347,4 @@ pnpm test src/features/commands
 cargo test --locked --manifest-path src-tauri/Cargo.toml --lib vnc::
 ```
 
-Windows 与 macOS 的原生窗口、安装及显示验证步骤见 [VNC 平台验收](VNC_REMOTE_DESKTOP_PLAN.md)。
+Windows 与 macOS 的原生窗口、安装及显示验证步骤见 [VNC 平台验收](changes/C004-vnc-remote-desktop.md)。

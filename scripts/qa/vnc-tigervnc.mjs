@@ -10,7 +10,7 @@ import path from "node:path";
 
 const output = path.resolve("outputs/vnc-v2");
 const cygwin = path.resolve(
-  process.env.ORIATUNNEL_XVNC_ROOT ?? path.join(output, "cygwin"),
+  process.env.ORIASSH_XVNC_ROOT ?? path.join(output, "cygwin"),
 );
 const bin = path.join(cygwin, "bin");
 const installed = fs.readFileSync(
@@ -19,7 +19,7 @@ const installed = fs.readFileSync(
 );
 assert.match(installed, /^tigervnc-server tigervnc-server-1\.8\.0-3\.tar\./m);
 const executable = fs.realpathSync(
-  process.argv[2] ?? "src-tauri/target/debug/oria-tunnel.exe",
+  process.argv[2] ?? "src-tauri/target/debug/oria-ssh.exe",
 );
 fs.mkdirSync(output, { recursive: true });
 const profile = fs.mkdtempSync(path.join(output, "tiger-"));
@@ -120,8 +120,8 @@ try {
   launch(executable, ["vnc://127.0.0.1:" + vncPort], {
     env: {
       ...process.env,
-      ORIATUNNEL_TEST_DATA_DIR: path.join(profile, "data"),
-      ORIATUNNEL_TEST_SSH_CONFIG: ssh,
+      ORIASSH_TEST_DATA_DIR: path.join(profile, "data"),
+      ORIASSH_TEST_SSH_CONFIG: ssh,
       WEBVIEW2_USER_DATA_FOLDER: path.join(profile, "webview"),
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:
         "--remote-debugging-address=127.0.0.1 --remote-debugging-port=" + debug,
@@ -159,7 +159,17 @@ try {
       mobile: false,
     });
     const centered = await evaluate(
-      "(()=>{const f=document.querySelector('.vnc-password'), r=f.getBoundingClientRect(), label=f.querySelector('label').textContent;return Math.abs(r.x+r.width/2-innerWidth/2)<1 && Math.abs(r.y+r.height/2-innerHeight/2)<1 && document.body.innerText.split(label).length===2})()",
+      `(() => {
+        const form = document.querySelector(".vnc-password");
+        const bounds = form.getBoundingClientRect();
+        const input = form.querySelector("#vnc-password");
+        const heading = form.querySelector("h1");
+        return Math.abs(bounds.x + bounds.width / 2 - innerWidth / 2) < 1
+          && Math.abs(bounds.y + bounds.height / 2 - innerHeight / 2) < 1
+          && document.querySelectorAll(".vnc-password").length === 1
+          && form.getAttribute("aria-labelledby") === heading?.id
+          && input.labels.length === 1;
+      })()`,
     );
     assert.ok(centered, "one centered password prompt");
   }

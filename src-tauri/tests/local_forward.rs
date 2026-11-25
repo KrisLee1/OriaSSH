@@ -1,4 +1,4 @@
-use oria_tunnel_lib::{
+use oria_ssh_lib::{
     model::{ForwardKind, Host, Rule, Runtime},
     ssh_config, tunnel,
 };
@@ -18,6 +18,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 #[derive(Clone, Default)]
 struct TestServer {
+    login: String,
     listeners: Arc<Mutex<std::collections::BTreeMap<u32, CancellationToken>>>,
     destinations: Arc<Mutex<Vec<String>>>,
     commands: Arc<std::sync::atomic::AtomicUsize>,
@@ -34,6 +35,7 @@ impl server::Server for TestServer {
     type Handler = Self;
     fn new_client(&mut self, _: Option<std::net::SocketAddr>) -> Self {
         Self {
+            login: String::new(),
             listeners: Default::default(),
             destinations: self.destinations.clone(),
             commands: self.commands.clone(),
@@ -73,7 +75,12 @@ impl server::Handler for TestServer {
     ) -> Result<(), Self::Error> {
         self.commands
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        if command == b"test-command" {
+        if command == b"fixture-port 8888" && self.login == "deploy" {
+            session.channel_success(channel)?;
+            session.exit_status_request(channel, 0)?;
+            session.eof(channel)?;
+            session.close(channel)?;
+        } else if command == b"test-command" {
             session.channel_success(channel)?;
         } else {
             session.channel_failure(channel)?;
@@ -124,14 +131,22 @@ impl server::Handler for TestServer {
         Ok(false)
     }
     async fn auth_password(&mut self, user: &str, password: &str) -> Result<Auth, Self::Error> {
-        Ok(if user == "tester" && password == "test-only" {
-            Auth::Accept
-        } else {
-            Auth::Reject {
-                proceed_with_methods: None,
-                partial_success: false,
-            }
-        })
+        Ok(
+            if matches!(
+                (user, password),
+                ("tester", "test-only")
+                    | ("Build Operator", "fixture-alice")
+                    | ("deploy", "fixture-deploy")
+            ) {
+                self.login = user.into();
+                Auth::Accept
+            } else {
+                Auth::Reject {
+                    proceed_with_methods: None,
+                    partial_success: false,
+                }
+            },
+        )
     }
     async fn channel_open_direct_tcpip(
         &mut self,
@@ -225,15 +240,12 @@ async fn discovered_alias_real_ssh_bytes_stop_and_port_release() {
     let host = ssh_config::discover_files(&[file], dir.path())
         .hosts
         .remove(0);
-    let reserve = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = reserve.local_addr().unwrap().port();
-    drop(reserve);
     let rule = Rule {
         id: "test".into(),
         name: "Test forward".into(),
         host_id: host.id.clone(),
         bind_address: "127.0.0.1".into(),
-        bind_port: port,
+        bind_port: 0,
         target_host: "127.0.0.1".into(),
         target_port: target.port(),
         ..Default::default()
@@ -268,7 +280,9 @@ async fn discovered_alias_real_ssh_bytes_stop_and_port_release() {
         notify,
         prompt,
     ));
-    wait_for(&events, "listening").await;
+    let listening = wait_for(&events, "listening").await;
+    assert_eq!(listening.bound_address.unwrap().to_string(), "127.0.0.1");
+    let port = listening.bound_port.unwrap();
     let mut client = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
     let payload = vec![42u8; 256 * 1024];
     client.write_all(&payload).await.unwrap();
@@ -285,12 +299,8 @@ async fn discovered_alias_real_ssh_bytes_stop_and_port_release() {
         .iter()
         .any(|r| r.sent == payload.len() as u64 && r.received == payload.len() as u64));
     // A second independent rule must survive stopping the first.
-    let reservation = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port2 = reservation.local_addr().unwrap().port();
-    drop(reservation);
     let mut rule2 = rule.clone();
     rule2.id = "independent".into();
-    rule2.bind_port = port2;
     let events2 = Arc::new(Mutex::new(Vec::new()));
     let notify2 = {
         let e = events2.clone();
@@ -312,7 +322,8 @@ async fn discovered_alias_real_ssh_bytes_stop_and_port_release() {
         notify2,
         Arc::new(|_, _, _| panic!("Known key must not prompt")),
     ));
-    wait_for(&events2, "listening").await;
+    let port2 = wait_for(&events2, "listening").await.bound_port.unwrap();
+    assert_ne!(port, port2);
     cancel.cancel();
     tokio::time::timeout(Duration::from_secs(3), task)
         .await
@@ -320,7 +331,7 @@ async fn discovered_alias_real_ssh_bytes_stop_and_port_release() {
         .unwrap();
     assert_eq!(prompts.lock().unwrap().len(), 1);
     assert!(prompts.lock().unwrap()[0].starts_with("SHA256:"));
-    assert_eq!(wait_for(&events, "stopped").await.status, "stopped");
+    assert!(wait_for(&events, "stopped").await.bound_port.is_none());
     assert!(
         TcpListener::bind(("127.0.0.1", port)).await.is_ok(),
         "stop must release listener"
@@ -344,7 +355,7 @@ async fn discovered_alias_real_ssh_bytes_stop_and_port_release() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn failed_trust_auth_bind_and_cancel_never_leak_listener() {
-    use oria_tunnel_lib::model::Host;
+    use oria_ssh_lib::model::Host;
     let socket = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let ssh_port = socket.local_addr().unwrap().port();
     let key = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap();
@@ -371,7 +382,7 @@ async fn failed_trust_auth_bind_and_cancel_never_leak_listener() {
         port: ssh_port,
         user: "tester".into(),
         identity_files: vec![dir.path().join("absent").to_string_lossy().into_owned()],
-        auth_method: oria_tunnel_lib::model::AuthMethod::Password,
+        auth_method: oria_ssh_lib::model::AuthMethod::Password,
         ..Default::default()
     };
     for mode in ["mismatch", "auth", "occupied", "cancel"] {
@@ -508,7 +519,7 @@ async fn isolated_loopback_remote_and_socks_bytes_dns_commands_and_release() {
         address: "127.0.0.1".into(),
         port: ssh_port,
         user: "tester".into(),
-        auth_method: oria_tunnel_lib::model::AuthMethod::Password,
+        auth_method: oria_ssh_lib::model::AuthMethod::Password,
         ..Default::default()
     };
     for kind in [ForwardKind::R, ForwardKind::D] {
@@ -519,7 +530,7 @@ async fn isolated_loopback_remote_and_socks_bytes_dns_commands_and_release() {
             id: format!("{kind:?}"),
             name: "fixture".into(),
             host_id: host.id.clone(),
-            bind_port: port,
+            bind_port: if kind == ForwardKind::D { 0 } else { port },
             target_host: "127.0.0.1".into(),
             target_port: target.port(),
             kind,
@@ -542,7 +553,12 @@ async fn isolated_loopback_remote_and_socks_bytes_dns_commands_and_release() {
             Arc::new(move |r| e.lock().unwrap().push(r)),
             Arc::new(|_, _, _| panic!("known key")),
         ));
-        wait_for(&events, "listening").await;
+        let listener = wait_for(&events, "listening").await;
+        let port = if kind == ForwardKind::D {
+            listener.bound_port.unwrap()
+        } else {
+            port
+        };
         // An idle SOCKS client must not block other requests or stop.
         let _idle = if kind == ForwardKind::D {
             Some(TcpStream::connect(("127.0.0.1", port)).await.unwrap())
@@ -787,7 +803,7 @@ async fn isolated_loopback_ordered_inline_jumps_check_each_key_authentication_an
             address: "127.0.0.1".into(),
             port,
             user: "tester".into(),
-            auth_method: oria_tunnel_lib::model::AuthMethod::Password,
+            auth_method: oria_ssh_lib::model::AuthMethod::Password,
             ..Default::default()
         });
     }
@@ -804,7 +820,7 @@ async fn isolated_loopback_ordered_inline_jumps_check_each_key_authentication_an
         .iter()
         .find(|h| h.id == "ssh:target")
         .unwrap();
-    let route = oria_tunnel_lib::model::resolve_jumps(&discovered.hosts, target).unwrap();
+    let route = oria_ssh_lib::model::resolve_jumps(&discovered.hosts, target).unwrap();
     assert_eq!(route.len(), 2);
     for mode in [
         "success",
@@ -931,7 +947,7 @@ async fn isolated_platform_agent_signs_and_obeys_identities_only() {
     #[cfg(windows)]
     use tokio::net::windows::named_pipe::ServerOptions;
     #[cfg(windows)]
-    let pipe = format!(r"\\.\pipe\oriatunnel-fixture-{}", uuid::Uuid::new_v4());
+    let pipe = format!(r"\\.\pipe\oriassh-fixture-{}", uuid::Uuid::new_v4());
     #[cfg(windows)]
     let first = ServerOptions::new()
         .first_pipe_instance(true)
@@ -994,7 +1010,7 @@ async fn isolated_platform_agent_signs_and_obeys_identities_only() {
             address: "127.0.0.1".into(),
             port: ssh_port,
             user: "tester".into(),
-            auth_method: oria_tunnel_lib::model::AuthMethod::Agent,
+            auth_method: oria_ssh_lib::model::AuthMethod::Agent,
             identity_agent: Some(pipe.clone()),
             identities_only: true,
             identity_files: vec![if allow {
@@ -1075,7 +1091,7 @@ async fn isolated_fixture() -> (Host, String, tokio::task::JoinHandle<()>) {
             address: "127.0.0.1".into(),
             port,
             user: "tester".into(),
-            auth_method: oria_tunnel_lib::model::AuthMethod::Password,
+            auth_method: oria_ssh_lib::model::AuthMethod::Password,
             ..Default::default()
         },
         fingerprint,
@@ -1124,7 +1140,7 @@ async fn discovered_crypto_policy_controls_handshake_and_refuses_disallowed_serv
             .hosts
             .remove(0);
         assert!(host.diagnostics.is_empty(), "{:?}", host.diagnostics);
-        host.auth_method = oria_tunnel_lib::model::AuthMethod::Password;
+        host.auth_method = oria_ssh_lib::model::AuthMethod::Password;
         let events = Arc::new(Mutex::new(Vec::new()));
         let captured = events.clone();
         tokio::time::timeout(
@@ -1210,7 +1226,7 @@ async fn sendenv_source_allows_forwarding_but_never_silently_drops_command_envir
         } else {
             wait_for(&events, "failed").await;
             assert!(events.lock().unwrap().iter().any(|runtime| {
-                runtime.error_kind == Some(oria_tunnel_lib::model::FailureKind::Configuration)
+                runtime.error_kind == Some(oria_ssh_lib::model::FailureKind::Configuration)
                     && runtime.message.contains("SendEnv")
             }));
         }
@@ -1368,7 +1384,7 @@ async fn isolated_loopback_encrypted_private_key_authentication_and_wrong_passph
         port,
         user: "tester".into(),
         identity_files: vec![path.to_string_lossy().into_owned()],
-        auth_method: oria_tunnel_lib::model::AuthMethod::PrivateKey,
+        auth_method: oria_ssh_lib::model::AuthMethod::PrivateKey,
         ..Default::default()
     };
     for (passphrase, saved) in [
@@ -1485,7 +1501,7 @@ async fn password_observer_only_receives_successful_trusted_authentication_per_h
                 Arc::new(|_, _, _| panic!("known fixture key")),
                 Some(Arc::new(move |host, password, method| {
                     assert!(password == "test-only");
-                    assert!(method == oria_tunnel_lib::model::AuthMethod::Password);
+                    assert!(method == oria_ssh_lib::model::AuthMethod::Password);
                     output.lock().unwrap().push(host.id.clone());
                 })),
             ),
@@ -1531,8 +1547,8 @@ async fn isolated_loopback_handshake_timeout_releases_socket_but_waits_for_user_
             address: "127.0.0.1".into(),
             port,
             user: "tester".into(),
-            auth_method: oria_tunnel_lib::model::AuthMethod::Password,
-            connection: oria_tunnel_lib::model::ConnectionOptions {
+            auth_method: oria_ssh_lib::model::AuthMethod::Password,
+            connection: oria_ssh_lib::model::ConnectionOptions {
                 connect_timeout_secs: 1,
                 ..Default::default()
             },
@@ -1619,5 +1635,130 @@ async fn isolated_loopback_handshake_timeout_releases_socket_but_waits_for_user_
     pending.lock().unwrap().take().unwrap().send(true).unwrap();
     task.await.unwrap();
     assert_eq!(events.lock().unwrap().last().unwrap().status, "tested");
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn one_host_freezes_exact_usernames_across_concurrent_forwards_and_service_exec() {
+    use oria_ssh_lib::{
+        commands::{self, Action, Manager},
+        model::{primary_login_id, LoginIdentity},
+    };
+    let (mut host, key, server) = isolated_fixture().await;
+    let alternate = uuid::Uuid::new_v4().to_string();
+    host.user = "Build Operator".into();
+    host.logins.push(LoginIdentity {
+        id: alternate.clone(),
+        label: "Deploy".into(),
+        user: "deploy".into(),
+        auth_method: host.auth_method.clone(),
+        identity_files: vec![],
+    });
+    let remote = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let remote_port = remote.local_addr().unwrap().port();
+    drop(remote);
+    let rules: Vec<_> = [ForwardKind::L, ForwardKind::D, ForwardKind::R]
+        .into_iter()
+        .enumerate()
+        .map(|(i, kind)| {
+            let remote = kind == ForwardKind::R;
+            Rule {
+                id: format!("rule-{i}"),
+                name: format!("fixture {i}"),
+                host_id: host.id.clone(),
+                kind,
+                login_identity_id: Some(if remote {
+                    alternate.clone()
+                } else {
+                    primary_login_id(&host.id)
+                }),
+                bind_port: if remote { remote_port } else { 0 },
+                target_host: "127.0.0.1".into(),
+                target_port: 8888,
+                ..Default::default()
+            }
+        })
+        .collect();
+    host.default_login_id = Some(alternate.clone());
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("fixture.json");
+    std::fs::write(&config, serde_json::to_vec(&(host, rules)).unwrap()).unwrap();
+    let (host, rules): (Host, Vec<Rule>) =
+        serde_json::from_slice(&std::fs::read(config).unwrap()).unwrap();
+    let mut jobs = Vec::new();
+    for rule in &rules {
+        let login = host.login(rule.login_identity_id.as_deref()).unwrap();
+        let secret = if rule.kind == ForwardKind::R {
+            "fixture-deploy"
+        } else {
+            "fixture-alice"
+        };
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let observed = events.clone();
+        let cancel = CancellationToken::new();
+        let job = tokio::spawn(tunnel::run(
+            tunnel::RunRequest {
+                host: login,
+                rule: rule.clone(),
+                run_id: rule.id.clone(),
+                secret: secret.into(),
+                expected: Some(key.clone()),
+                test_only: false,
+                jumps: vec![],
+            },
+            cancel.clone(),
+            Arc::new(move |r| observed.lock().unwrap().push(r)),
+            Arc::new(|_, _, _| panic!("fixture is pinned")),
+        ));
+        let live = wait_for(&events, "listening").await;
+        assert_eq!(
+            live.host_snapshot.unwrap().user,
+            if rule.kind == ForwardKind::R {
+                "deploy"
+            } else {
+                "Build Operator"
+            }
+        );
+        if rule.kind != ForwardKind::R {
+            assert!(live.bound_port.unwrap() > 0);
+            assert_eq!(rule.bind_port, 0);
+        }
+        jobs.push((cancel, job));
+    }
+    let mut action:Action=serde_json::from_value(serde_json::json!({"id":"port","label":"port","kind":"custom","command":"fixture-port {{service.port}}","timeoutSecs":5,"successCodes":[0],"confirm":true})).unwrap();
+    assert_eq!(action.resolved(None).unwrap().command, action.command);
+    action.service_port_variable = true;
+    assert!(action.resolved(None).is_err());
+    let resolved = action.resolved(Some(8888)).unwrap();
+    assert_eq!(resolved.command, "fixture-port 8888");
+    let manager = Arc::new(Manager::default());
+    let (run,cancel,_) = manager.register(serde_json::from_value(serde_json::json!({"id":"port","requestId":"port","serviceId":"jupyter","actionId":"port","serviceRevision":"v1","hostId":host.id,"hostName":"fixture","endpoint":"deploy@loopback","actionLabel":"port","phase":"connecting","submitted":false,"startedAt":1,"revision":1,"truncated":false})).unwrap()).unwrap();
+    commands::execute(
+        manager.clone(),
+        run.id,
+        cancel,
+        commands::Request {
+            hops: vec![tunnel::HopRequest {
+                host: host.login(Some(&alternate)).unwrap(),
+                secret: "fixture-deploy".into(),
+                expected: Some(key),
+            }],
+            action: resolved,
+            notify: Arc::new(|_| {}),
+            prompt: Arc::new(|_, _, _| panic!("fixture is pinned")),
+            observer: None,
+            validate: Arc::new(|| true),
+        },
+    )
+    .await;
+    assert_eq!(manager.list()[0].phase, "succeeded");
+    let (cancel, job) = jobs.remove(0);
+    cancel.cancel();
+    job.await.unwrap();
+    assert!(jobs.iter().all(|(_, job)| !job.is_finished()));
+    for (cancel, job) in jobs {
+        cancel.cancel();
+        job.await.unwrap();
+    }
     server.abort();
 }

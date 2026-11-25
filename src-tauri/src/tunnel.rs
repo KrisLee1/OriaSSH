@@ -125,6 +125,10 @@ impl client::Handler for Client {
 }
 fn update(runtime: &Arc<Mutex<Runtime>>, notify: &Notify, status: &str, message: String) {
     let mut r = runtime.lock().unwrap();
+    if status != "listening" {
+        r.bound_address = None;
+        r.bound_port = None;
+    }
     r.status = status.into();
     r.message = message;
     notify(r.clone());
@@ -151,6 +155,7 @@ pub async fn run_with_password_observer(
         run_id: request.run_id.clone(),
         status: "connecting".into(),
         host_snapshot: Some(request.host.clone()),
+        active_route: (!test_only).then(|| (&request.rule).into()),
         jump_snapshots: request.jumps.iter().map(|h| h.host.clone()).collect(),
         ..Default::default()
     }));
@@ -676,6 +681,17 @@ async fn serve(
                 })?,
         )
     };
+    if let Some(listener) = &listener {
+        let address = listener.local_addr().map_err(|_| {
+            Failure::new(
+                FailureKind::Bind,
+                crate::native_message::plain("localListenerFailed"),
+            )
+        })?;
+        let mut state = runtime.lock().unwrap();
+        state.bound_address = Some(address.ip());
+        state.bound_port = Some(address.port());
+    }
     update(runtime, notify, "listening", String::new());
     let mut timer = tokio::time::interval(Duration::from_millis(500));
     loop {

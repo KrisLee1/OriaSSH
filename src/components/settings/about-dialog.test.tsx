@@ -25,7 +25,7 @@ describe("about entry", () => {
     );
     expect(html).toContain('data-slot="avatar"');
     expect(html).toContain('data-slot="avatar-image"');
-    expect(html).toContain("oria-tunnel-logo.svg");
+    expect(html).toContain("oria-ssh-logo.svg");
     expect(html).toContain('aria-haspopup="dialog"');
     expect(html).toContain(
       `aria-label="${i18n.t("about.open", { ns: "updater" })}"`,

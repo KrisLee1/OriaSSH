@@ -2,11 +2,57 @@ import { describe, it, expect } from "vitest";
 import {
   serviceTarget,
   resolveTrayServiceRequest,
-  groupServicesByHost,
+  serviceCommandOutput,
+  serviceLoginId,
+  serviceRuntimeState,
 } from "./service-target";
 import { newService, newAction } from "./command-model";
-import { emptyRule } from "@/features/tunnels/rule-model";
+import { emptyHost, emptyRule } from "@/features/tunnels/rule-model";
 import { directProtocol } from "./direct-protocol";
+import type { CommandRun, ServiceObservation } from "@/types";
+
+it("uses the current host credential unless the service or the execution selected one", () => {
+  const host = { ...emptyHost(), id: "host", defaultLoginId: "alice" };
+  const service = newService(host.id);
+  expect(serviceLoginId(service, host)).toBe("alice");
+  const switched = { ...host, defaultLoginId: "deploy" };
+  expect(serviceLoginId(service, switched)).toBe("deploy");
+  const configured = { ...service, loginByHost: { [host.id]: "alice" } };
+  expect(serviceLoginId(configured, switched)).toBe("alice");
+  expect(serviceLoginId(configured, switched, "primary:host")).toBe("primary:host");
+  expect(serviceLoginId(service, { ...host, defaultLoginId: null })).toBe("primary:host");
+});
+
+it("reopens the active run on the card's host before any finished or automatic status output", () => {
+  const service = { ...newService("first"), id: "service", revision: "v2" };
+  const last = { id: "last", serviceId: service.id, serviceRevision: service.revision, hostId: "first", actionId: "start", finishedAt: 5 } as CommandRun;
+  const active = { ...last, id: "active", finishedAt: null };
+  const elsewhere = { ...active, hostId: "second" };
+  const stale = { ...active, serviceRevision: "v1" };
+  const status = { ...last, actionId: "$status" };
+  expect(serviceCommandOutput([elsewhere, stale, status, last, active], service, "first")).toBe(active);
+  expect(serviceCommandOutput([elsewhere, stale, status, last], service, "first")).toBe(last);
+  expect(serviceCommandOutput([elsewhere, stale, status], service, "first")).toBeUndefined();
+});
+
+it("only shows an active foreground launch or a fresh observation for this login", () => {
+  const start = newAction("start", "start");
+  const logs = newAction("logs", "logs");
+  const service = { ...newService("host"), id: "service", revision: "v2", actions: [start, logs] };
+  const run = { hostId: "host", serviceId: service.id, serviceRevision: service.revision,
+    actionId: start.id, phase: "foreground-running", finishedAt: null } as CommandRun;
+  const fact = { hostId: run.hostId, serviceId: service.id, serviceRevision: service.revision,
+    loginId: "alice", status: { value: "running", expired: false } } as ServiceObservation;
+  const state = (runs: CommandRun[], facts: ServiceObservation[] = []) =>
+    serviceRuntimeState(service, "host", "alice", runs, facts, false);
+  expect(state([run])).toBe("foreground-running");
+  for (const change of [{ actionId: logs.id }, { finishedAt: 10 }, { phase: "connecting" },
+    { serviceRevision: "v1" }, { hostId: "another" }]) expect(state([{ ...run, ...change }])).toBe("unknown");
+  expect(state([], [fact])).toBe("running");
+  expect(state([], [{ ...fact, loginId: "bob" }])).toBe("unknown");
+  expect(state([], [{ ...fact, status: { ...fact.status, expired: true } }])).toBe("unknown");
+  expect(state([], [{ ...fact, status: { ...fact.status, value: "stopped" } }])).toBe("stopped");
+});
 
 describe("direct service launch", () => {
   it.each([
@@ -102,22 +148,6 @@ describe("forward-provided service execution target", () => {
       id: "host:host-a",
       hostId: "host-a",
     });
-  });
-  it("groups shared services under each host and keeps unassigned services separate", () => {
-    const service = {
-      ...newService(""),
-      id: "shared",
-      hostIds: ["host-a", "host-b"],
-    };
-    const unassigned = { ...newService(""), id: "unassigned" };
-    const groups = groupServicesByHost([service, unassigned], {
-      ...data,
-      hosts: [],
-    });
-    expect(groups.map((g) => g.hostId)).toEqual(["host-a", "host-b", ""]);
-    expect(groups[0].services[0]).toBe(service);
-    expect(groups[1].services[0]).toBe(service);
-    expect(groups[2].services[0]).toBe(unassigned);
   });
   it("permits a single reference but never invents a host for an unbound template", () => {
     expect(

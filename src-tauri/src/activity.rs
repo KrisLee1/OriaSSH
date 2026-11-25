@@ -22,10 +22,20 @@ pub enum Event {
     NeedsAttention,
     TargetReachable,
     TargetUnreachable,
+    CommandCompleted,
+    CommandFailed,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Record {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub login_identity_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub service_ids: Vec<String>,
     pub timestamp: u64,
     pub rule_id: String,
     pub run_id: String,
@@ -117,10 +127,40 @@ impl Activity {
             self.seen.remove(&r.rule_id);
         }
     }
+    pub fn command_finished(
+        &mut self,
+        host: &crate::model::Host,
+        rule_id: Option<&str>,
+        service: &str,
+        run_id: &str,
+        phase: &str,
+        auth_error: bool,
+    ) {
+        let runtime = Runtime {
+            host_snapshot: Some(host.clone()),
+            rule_id: rule_id.unwrap_or_default().into(),
+            run_id: run_id.into(),
+            service_ids: vec![service.into()],
+            error_kind: (auth_error || phase == "credentialsRequired")
+                .then_some(FailureKind::Authentication),
+            ..Default::default()
+        };
+        self.append(
+            &runtime,
+            match phase {
+                "succeeded" | "exited" => Event::CommandCompleted,
+                "cancelled" => Event::Stopped,
+                "credentialsRequired" | "unknown" | "interrupted" | "disconnected" => {
+                    Event::NeedsAttention
+                }
+                _ => Event::CommandFailed,
+            },
+        );
+    }
     fn append(&mut self, r: &Runtime, event: Event) {
         let level = if matches!(
             event,
-            Event::Failed | Event::NeedsAttention | Event::TargetUnreachable
+            Event::Failed | Event::NeedsAttention | Event::TargetUnreachable | Event::CommandFailed
         ) {
             "warning"
         } else {
@@ -128,6 +168,18 @@ impl Activity {
         }
         .into();
         let record = Record {
+            host_id: r
+                .host_snapshot
+                .as_ref()
+                .map(|h| h.id.clone())
+                .or_else(|| r.active_route.as_ref().map(|route| route.host_id.clone())),
+            login_identity_id: r.host_snapshot.as_ref().map(|h| {
+                h.active_login_id
+                    .clone()
+                    .unwrap_or_else(|| crate::model::primary_login_id(&h.id))
+            }),
+            username: r.host_snapshot.as_ref().map(|h| h.user.clone()),
+            service_ids: r.service_ids.clone(),
             timestamp: timestamp(),
             rule_id: r.rule_id.clone(),
             run_id: r.run_id.clone(),
@@ -174,6 +226,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut log = Activity::open(dir.path().into());
         let mut r = Runtime {
+            host_snapshot: Some(crate::model::Host {
+                id: "fixture-host".into(),
+                user: "deploy".into(),
+                active_login_id: Some("fixture-login".into()),
+                ..Default::default()
+            }),
+            service_ids: vec!["service".into()],
             rule_id: "fixture".into(),
             run_id: "run".into(),
             status: "listening".into(),
@@ -205,6 +264,11 @@ mod tests {
         drop(file);
         let reloaded = Activity::open(dir.path().into());
         assert_eq!(reloaded.records().len(), 1);
+        let frozen = &reloaded.records()[0];
+        assert_eq!(frozen.host_id.as_deref(), Some("fixture-host"));
+        assert_eq!(frozen.login_identity_id.as_deref(), Some("fixture-login"));
+        assert_eq!(frozen.username.as_deref(), Some("deploy"));
+        assert_eq!(frozen.service_ids, ["service"]);
         assert!(!log.write_failed);
         let blocked = dir.path().join("not-a-directory");
         std::fs::write(&blocked, b"fixture").unwrap();

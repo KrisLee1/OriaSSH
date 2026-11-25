@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { activityRows, filterActivity, groupActivity } from "./activity-model";
 import { emptyHost, emptyRule } from "./rule-model";
+import { newService } from "@/features/commands/command-model";
 import type { ActivityRecord } from "@/types";
 
 describe("activity filtering and grouping", () => {
@@ -31,8 +32,8 @@ describe("activity filtering and grouping", () => {
       record("forward", 4, "listening", "network"),
     ],
   });
-  it("uses stable IDs for same-name hosts, separates host tests and retains deleted forwards", () => {
-    expect(groupActivity(rows, "host")).toHaveLength(3);
+  it("orders recent events first, separates host tests and retains deleted forwards", () => {
+    expect(groupActivity(rows, "none")).toEqual([{ id: "", rows }]);
     expect(rows[0].record.timestamp).toBe(4);
     expect(
       activityRows({
@@ -51,6 +52,68 @@ describe("activity filtering and grouping", () => {
         (group) => group.id === "status-network-error",
       )?.rows,
     ).toHaveLength(1);
+  });
+  it("keeps recorded ownership and username when a rule moves or disappears", () => {
+    const [row] = activityRows({
+      hosts: [],
+      rules: [{ ...emptyRule("new-host"), id: "same-rule" }],
+      activity: [
+        {
+          ...record("same-rule", 9),
+          hostId: "original",
+          loginIdentityId: "deploy-id",
+          username: "deploy",
+          serviceIds: ["service"],
+        },
+      ],
+    });
+    expect(row.hostId).toBe("original");
+    expect(row.rule).toBeUndefined();
+    expect(row.services).toEqual([{ id: "service", name: "service" }]);
+    expect(
+      filterActivity(
+        [row],
+        {
+          host: "host:original",
+          forward: "all",
+          status: "all",
+          warnings: false,
+          query: "deploy",
+        },
+        (key) => key,
+      ),
+    ).toEqual([row]);
+  });
+  it("resolves and searches the service names recorded on an event", () => {
+    const found = activityRows({
+      hosts: [],
+      rules: [],
+      services: [{ ...newService(""), id: "git", name: "Gitea" }],
+      activity: [
+        {
+          ...record("", 10, "command-completed"),
+          serviceIds: ["git", "removed-service", "git"],
+        },
+        record("legacy", 9),
+      ],
+    });
+    expect(found[0].services).toEqual([
+      { id: "git", name: "Gitea" },
+      { id: "removed-service", name: "removed-service" },
+    ]);
+    expect(
+      filterActivity(
+        found,
+        {
+          host: "all",
+          forward: "all",
+          status: "all",
+          warnings: false,
+          query: "gitea",
+        },
+        (key) => key,
+      ),
+    ).toEqual([found[0]]);
   });
   it("combines host, forward, state, warning and text filters without treating tests as forwards", () => {
     const filter = {

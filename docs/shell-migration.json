@@ -202,7 +202,7 @@
   "adaptations": [
     "Application storage/event namespace",
     "Window close removes Aide avatar dependency",
-    "Bridge/types supplied by OriaTunnel",
+    "Bridge/types supplied by OriaSSH",
     "Interactive center slot added after migration",
     "Appearance controls live only in settings; sliders and reset actions share one row",
     "Controls use theme border tokens across modes; select scroll arrows share the translucent surface",
@@ -289,14 +289,14 @@
         "sha256": "dc960903223e269b2d7f8da377c61d3bf1add15c35f46b6d1de7dd83c2c2b643"
       }
     ],
-    "masters": "src-tauri/icons/OriaTunnelIconExports",
+    "masters": "src-tauri/icons/OriaSSHIconExports",
     "mapping": {
       "light": "Default",
       "dark": "Dark",
       "mono": "ClearDark"
     },
     "adaptations": [
-      "OriaTunnel storage/event namespace and String command errors",
+      "OriaSSH storage/event namespace and String command errors",
       "Existing soft Tabs; settings choices display icons only, retaining localized aria-label/title",
       "Ordered native updates and Toast failures; macOS awaits main-thread completion",
       "Windows installed shortcuts are updated only when targeting the exact running executable; test profiles use an isolated asset directory",
@@ -331,10 +331,10 @@
         "sha256": "2f8bce4289e7a70f96f0148adf3baa5d64f591bb81433dda2310a0aeabeb59fc"
       }
     ],
-    "master": "src-tauri/icons/OriaTunnelInstaller.svg",
+    "master": "src-tauri/icons/OriaSSHInstaller.svg",
     "adaptations": [
       "Acrylic cube uses the central hub blue (#1268FF) at the user request; 820-unit canvas enlarges the subject by about 25%, with compact shadows",
-      "Aide character replaced by the approved six-node OriaTunnel vector",
+      "Aide character replaced by the approved six-node OriaSSH vector",
       "Installer ICO/ICNS generated separately from application and tray icons",
       "macOS package script regenerates assets, builds app/DMG, updates mounted-volume and Finder file icons, and preserves file-icon metadata in ZIP",
       "Windows NSIS uses installer-icon.ico; the installed app retains icon.ico",

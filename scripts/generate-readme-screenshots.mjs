@@ -185,7 +185,7 @@ function windowShell(active, content, options = {}) {
   right += logoIcon(1399, 13, 19);
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-labelledby="title desc">
-<title id="title">OriaTunnel · ${esc(options.title || pageNames[pageKeys.indexOf(active)])}</title>
+<title id="title">OriaSSH · ${esc(options.title || pageNames[pageKeys.indexOf(active)])}</title>
 <desc id="desc">${esc(options.description || "当前浅色界面的静态 SVG 复刻。使用独立 example.com 演示数据，全部转发停止，未连接真实 SSH。")}</desc>
 <defs>
   ${logoDefinitions}
@@ -204,7 +204,7 @@ ${left}${nav}${right}
 ${icon("terminal", 640, 929, 15, C.muted)}
 ${text(664, 942, "0 运行中", { size: 10, fill: C.muted })}
 ${line(730, 930, 730, 943, C.borderStrong)}
-${text(743, 942, "OriaTunnel", { size: 10, fill: C.muted })}
+${text(743, 942, "OriaSSH", { size: 10, fill: C.muted })}
 </g>
 </svg>
 `;
@@ -449,30 +449,30 @@ const screenshots = {
   "connection-map.svg": windowShell("canvas", connectionMap(), {
     title: "连接图",
     leftActions: ["serverPlus", "branch"],
-    description: "OriaTunnel 当前连接图的静态 SVG 复刻。3 台 example.com 演示主机与 6 条 L/R/D 转发均为停止状态，未连接真实 SSH。",
+    description: "OriaSSH 当前连接图的静态 SVG 复刻。3 台 example.com 演示主机与 6 条 L/R/D 转发均为停止状态，未连接真实 SSH。",
   }),
   "forwards.svg": windowShell("forwards", forwardsPage(), {
     title: "转发",
     leftActions: ["branch"],
-    description: "OriaTunnel 当前转发列表的静态 SVG 复刻，包含 6 条停止的 L/R/D 示例转发，未连接真实 SSH。",
+    description: "OriaSSH 当前转发列表的静态 SVG 复刻，包含 6 条停止的 L/R/D 示例转发，未连接真实 SSH。",
   }),
   "services.svg": windowShell("services", servicesPage(), {
     title: "服务",
     leftActions: ["plus"],
-    description: "OriaTunnel 当前服务页的静态 SVG 复刻，展示 0 项服务的空状态与添加服务入口。",
+    description: "OriaSSH 当前服务页的静态 SVG 复刻，展示 0 项服务的空状态与添加服务入口。",
   }),
   "hosts.svg": windowShell("hosts", hostsPage(), {
     title: "SSH 主机",
     leftActions: ["serverPlus"],
-    description: "OriaTunnel 当前 SSH 主机页的静态 SVG 复刻，展示开发、实验室、云服务三个分组中的 example.com 演示主机，无真实凭据。",
+    description: "OriaSSH 当前 SSH 主机页的静态 SVG 复刻，展示开发、实验室、云服务三个分组中的 example.com 演示主机，无真实凭据。",
   }),
   "logs.svg": windowShell("logs", logsPage(), {
     title: "日志",
-    description: "OriaTunnel 当前日志页的静态 SVG 复刻，展示隔离示例主机的测试连接记录，不代表真实连接。",
+    description: "OriaSSH 当前日志页的静态 SVG 复刻，展示隔离示例主机的测试连接记录，不代表真实连接。",
   }),
   "terminal.svg": windowShell("logs", terminalPage(), {
     title: "SSH 终端",
-    description: "OriaTunnel 当前 SSH 终端入口的静态 SVG 复刻，展示右侧工作面板与主机选择弹窗，未发起新的 SSH 连接。",
+    description: "OriaSSH 当前 SSH 终端入口的静态 SVG 复刻，展示右侧工作面板与主机选择弹窗，未发起新的 SSH 连接。",
   }),
 };
 

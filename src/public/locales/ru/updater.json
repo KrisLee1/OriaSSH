@@ -47,9 +47,9 @@
   },
   "about": {
     "title": "О приложении",
-    "open": "Об OriaTunnel",
-    "openWithUpdate": "Об OriaTunnel, доступно обновление",
-    "icon": "Значок приложения OriaTunnel",
+    "open": "Об OriaSSH",
+    "openWithUpdate": "Об OriaSSH, доступно обновление",
+    "icon": "Значок приложения OriaSSH",
     "version": "Версия {{version}}",
     "copyright": "© {{year}} KrisLee",
     "website": "Официальный сайт",

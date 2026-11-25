@@ -3,9 +3,7 @@ import { SearchInput } from "@/components/ui/search-input";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import {
   Select,
   SelectTrigger,
@@ -22,27 +20,39 @@ import {
 } from "./activity-model";
 import type { Snapshot } from "@/types";
 import { ActivityList } from "./activity-list";
-export function ActivityView({ data }: { data: Snapshot }) {
+export function ActivityView({
+  data,
+  scope,
+}: {
+  data: Snapshot;
+  scope?: string | null;
+}) {
   const { t } = useTranslation("tunnel");
   const [query, setQuery] = useState("");
   const [warnings, setWarnings] = useState(false);
   const [host, setHost] = useState("all");
   const [forward, setForward] = useState("all");
+  const [login, setLogin] = useState("all");
+  const [service, setService] = useState("all");
   const [status, setStatus] = useState("all");
-  const [grouping, setGrouping] = useState<ActivityGrouping>("host");
+  const [grouping, setGrouping] = useState<ActivityGrouping>("none");
   const [viewport, setViewport] = useState<HTMLDivElement | null>(null);
-  const rows = activityRows(data);
+  const hostScoped = typeof scope === "string";
+  const rows = activityRows(data).filter(
+    (r) =>
+      scope === undefined || (scope === null ? !r.host : r.hostId === scope),
+  );
   const records = filterActivity(
-    rows,
+    rows.filter(
+      (r) =>
+        (login === "all" || login === r.record.loginIdentityId) &&
+        (service === "all" || r.record.serviceIds?.includes(service)),
+    ),
     { host, forward, status, query, warnings },
     (key) => t(key),
   );
   const hostName = (row: ActivityRow) =>
     row.host?.name || row.hostId || t("unknownLogHost");
-  const forwardName = (row: ActivityRow) =>
-    row.hostTest
-      ? `${t("testConnection")} · ${hostName(row)}`
-      : row.rule?.name || row.record.ruleId;
   const hosts = [
     ...new Map(
       rows.map((row) => [
@@ -57,10 +67,13 @@ export function ActivityView({ data }: { data: Snapshot }) {
   const forwards = [
     ...new Map(
       rows
-        .filter((row) => !row.hostTest)
+        .filter((row) => !row.hostTest && row.record.ruleId)
         .map((row) => [
           row.record.ruleId,
-          { value: `rule:${row.record.ruleId}`, label: forwardName(row) },
+          {
+            value: `rule:${row.record.ruleId}`,
+            label: row.rule?.name || row.record.ruleId,
+          },
         ]),
     ).values(),
   ];
@@ -69,7 +82,6 @@ export function ActivityView({ data }: { data: Snapshot }) {
   );
   const groups = [
     { value: "none", label: t("groupNoneLogs") },
-    { value: "host", label: t("groupHost") },
     { value: "forward", label: t("groupForward") },
     { value: "status", label: t("groupStatus") },
   ];
@@ -112,7 +124,11 @@ export function ActivityView({ data }: { data: Snapshot }) {
   return (
     <ScrollArea
       className="page-scroll-area"
-      viewportClassName="page activity-page scroll-fade"
+      viewportClassName={
+        scope === undefined
+          ? "page activity-page scroll-fade"
+          : "activity-page activity-timeline"
+      }
       viewportRef={setViewport}
     >
       <header className="activity-page-heading">
@@ -131,11 +147,49 @@ export function ActivityView({ data }: { data: Snapshot }) {
           onChange={(event) => setQuery(event.target.value)}
         />
         <div className="host-toolbar-controls">
+          {!hostScoped &&
+            picker(
+              t("filterLogHost"),
+              host,
+              [{ value: "all", label: t("allLogHosts") }, ...hosts],
+              setHost,
+            )}
           {picker(
-            t("filterLogHost"),
-            host,
-            [{ value: "all", label: t("allLogHosts") }, ...hosts],
-            setHost,
+            t("logins"),
+            login,
+            [
+              { value: "all", label: t("allLogins") },
+              ...Array.from(
+                new Map(
+                  rows
+                    .filter((r) => r.record.loginIdentityId)
+                    .map((r) => [
+                      r.record.loginIdentityId!,
+                      {
+                        value: r.record.loginIdentityId!,
+                        label: r.record.username || r.record.loginIdentityId!,
+                      },
+                    ]),
+                ).values(),
+              ),
+            ],
+            setLogin,
+          )}
+          {picker(
+            t("services", { ns: "commands" }),
+            service,
+            [
+              { value: "all", label: t("allServiceLogs") },
+              ...new Map(
+                rows.flatMap((row) =>
+                  row.services.map(({ id, name }) => [
+                    id,
+                    { value: id, label: name },
+                  ]),
+                ),
+              ).values(),
+            ],
+            setService,
           )}
           {picker(
             t("filterLogForward"),
@@ -163,21 +217,10 @@ export function ActivityView({ data }: { data: Snapshot }) {
           >
             {t("warningsOnly")}
           </Button>
-          <div className="toolbar-grouping">
-            <Separator
-              orientation="vertical"
-              className="h-5 data-vertical:self-center"
-            />
-            {picker(t("groupLogs"), grouping, groups, (next) => {
-              if (
-                next === "none" ||
-                next === "host" ||
-                next === "forward" ||
-                next === "status"
-              )
-                setGrouping(next);
-            })}
-          </div>
+          {picker(t("groupLogs"), grouping, groups, (next) => {
+            if (next === "none" || next === "forward" || next === "status")
+              setGrouping(next);
+          })}
         </div>
       </div>
       {!records.length ? (
@@ -194,6 +237,8 @@ export function ActivityView({ data }: { data: Snapshot }) {
                   setQuery("");
                   setWarnings(false);
                   setHost("all");
+                  setLogin("all");
+                  setService("all");
                   setForward("all");
                   setStatus("all");
                 }}
@@ -212,9 +257,12 @@ export function ActivityView({ data }: { data: Snapshot }) {
             forward,
             status,
             grouping,
+            login,
+            service,
           ])}
           rows={records}
           grouping={grouping}
+          showHost={!hostScoped}
           viewport={viewport}
         />
       )}

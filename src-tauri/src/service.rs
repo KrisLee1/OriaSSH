@@ -45,6 +45,21 @@ pub enum DirectProtocol {
     Rediss,
 }
 
+impl DirectProtocol {
+    fn scheme(self) -> &'static str {
+        match self {
+            DirectProtocol::Http => "http",
+            DirectProtocol::Https => "https",
+            DirectProtocol::Vnc => "vnc",
+            DirectProtocol::Postgresql => "postgresql",
+            DirectProtocol::Mysql => "mysql",
+            DirectProtocol::Mongodb => "mongodb",
+            DirectProtocol::Redis => "redis",
+            DirectProtocol::Rediss => "rediss",
+        }
+    }
+}
+
 pub fn host_service_url(
     host: &Host,
     port: Option<u16>,
@@ -53,37 +68,72 @@ pub fn host_service_url(
     let port = port
         .filter(|p| *p != 0)
         .ok_or_else(|| crate::native_message::plain("servicePort"))?;
-    let scheme = match protocol {
-        DirectProtocol::Http => "http",
-        DirectProtocol::Https => "https",
-        DirectProtocol::Vnc => "vnc",
-        DirectProtocol::Postgresql => "postgresql",
-        DirectProtocol::Mysql => "mysql",
-        DirectProtocol::Mongodb => "mongodb",
-        DirectProtocol::Redis => "redis",
-        DirectProtocol::Rediss => "rediss",
-    };
+    let scheme = protocol.scheme();
     Ok(format!("{scheme}://{}:{port}/", authority(&host.address)?))
 }
 
 pub fn service_url(rule: &Rule, host: &Host, runtime: &Runtime) -> Result<String, String> {
+    let protocol = match rule
+        .service_protocol
+        .ok_or(crate::native_message::plain("serviceProtocol"))?
+    {
+        ServiceProtocol::Http => DirectProtocol::Http,
+        ServiceProtocol::Https => DirectProtocol::Https,
+        ServiceProtocol::Vnc => DirectProtocol::Vnc,
+    };
+    forwarded_url(rule, host, runtime, protocol)
+}
+
+pub fn linked_service_url(
+    services: &[crate::commands::Service],
+    service: &crate::commands::Service,
+    rule: &Rule,
+    host: &Host,
+    runtime: &Runtime,
+    protocol: DirectProtocol,
+) -> Result<String, String> {
+    if rule.kind != ForwardKind::L
+        || !service.host_ids.contains(&rule.host_id)
+        || service
+            .direct_protocol
+            .is_some_and(|saved| saved != protocol)
+    {
+        return Err("staleAction".into());
+    }
+    if !service.rule_ids.contains(&rule.id) {
+        // Older L rules are grouped with the unique matching port on this host.
+        let local_target = rule.target_host.eq_ignore_ascii_case(&host.address)
+            || rule.target_host.eq_ignore_ascii_case("localhost")
+            || matches!(rule.target_host.as_str(), "127.0.0.1" | "::1");
+        let conflict = services.iter().any(|other| {
+            other.id != service.id
+                && other.host_ids.contains(&rule.host_id)
+                && (other.rule_ids.contains(&rule.id) || other.port == service.port)
+        });
+        if !local_target || service.port != Some(rule.target_port) || conflict {
+            return Err("staleAction".into());
+        }
+    }
+    forwarded_url(rule, host, runtime, protocol)
+}
+
+pub(crate) fn forwarded_url(
+    rule: &Rule,
+    host: &Host,
+    runtime: &Runtime,
+    protocol: DirectProtocol,
+) -> Result<String, String> {
     if runtime.rule_id != rule.id || runtime.status != "listening" {
         return Err(crate::native_message::plain("serviceListening"));
     }
     if runtime.configuration_changed {
         return Err(crate::native_message::plain("serviceHostChanged"));
     }
-    let scheme = match rule
-        .service_protocol
-        .ok_or(crate::native_message::plain("serviceProtocol"))?
-    {
-        ServiceProtocol::Http => "http",
-        ServiceProtocol::Https => "https",
-        ServiceProtocol::Vnc => "vnc",
-    };
+    let scheme = protocol.scheme();
+    let bound = runtime.bound_address.map(|ip| ip.to_string());
     let address = match rule.kind {
         ForwardKind::D => return Err(crate::native_message::plain("serviceSocks")),
-        ForwardKind::L => match rule.bind_address.as_str() {
+        ForwardKind::L => match bound.as_deref().unwrap_or(&rule.bind_address) {
             "0.0.0.0" => "127.0.0.1",
             "::" => "::1",
             address => address,
@@ -98,11 +148,16 @@ pub fn service_url(rule: &Rule, host: &Host, runtime: &Runtime) -> Result<String
             }
         }
     };
-    if rule.bind_port == 0 {
+    let port = if rule.kind == ForwardKind::L {
+        runtime.bound_port.unwrap_or(rule.bind_port)
+    } else {
+        rule.bind_port
+    };
+    if port == 0 {
         return Err(crate::native_message::plain("servicePort"));
     }
     let authority = authority(address)?;
-    let url = tauri::Url::parse(&format!("{scheme}://{authority}:{}/", rule.bind_port))
+    let url = tauri::Url::parse(&format!("{scheme}://{authority}:{port}/"))
         .map_err(|_| crate::native_message::plain("serviceAddress"))?;
     if rule.kind == ForwardKind::R
         && url
@@ -176,6 +231,70 @@ mod tests {
             service_url(&rule, &host, &runtime).unwrap(),
             "vnc://[2001:db8::1]:18080/"
         );
+    }
+    #[test]
+    fn automatic_http_and_vnc_use_the_measured_listener() {
+        let (mut rule, host, mut runtime) = fixture();
+        rule.bind_port = 0;
+        assert!(service_url(&rule, &host, &runtime).is_err());
+        runtime.bound_address = Some("::1".parse().unwrap());
+        runtime.bound_port = Some(51842);
+        assert_eq!(
+            service_url(&rule, &host, &runtime).unwrap(),
+            "http://[::1]:51842/"
+        );
+        rule.service_protocol = Some(ServiceProtocol::Vnc);
+        assert_eq!(
+            service_url(&rule, &host, &runtime).unwrap(),
+            "vnc://[::1]:51842/"
+        );
+        runtime.status = "stopped".into();
+        assert!(service_url(&rule, &host, &runtime).is_err());
+    }
+    #[test]
+    fn linked_service_uses_its_live_local_listener_with_the_inferred_protocol() {
+        let (mut rule, host, mut rt) = fixture();
+        rule.service_protocol = None;
+        rule.host_id = "remote".into();
+        let profile: crate::commands::Service = serde_json::from_value(serde_json::json!({
+            "id":"web", "name":"Web", "revision":"v1", "hostIds":["remote"],
+            "ruleIds":[rule.id], "actions":[], "port":13085, "noLocalEnvironment":true,
+        }))
+        .unwrap();
+        rt.bound_port = Some(50881);
+        let open = |rule: &Rule, rt: &Runtime| {
+            linked_service_url(
+                std::slice::from_ref(&profile),
+                &profile,
+                rule,
+                &host,
+                rt,
+                DirectProtocol::Http,
+            )
+        };
+        assert_eq!(open(&rule, &rt).unwrap(), "http://127.0.0.1:50881/");
+        rt.configuration_changed = true;
+        assert!(open(&rule, &rt).is_err());
+        rt.configuration_changed = false;
+        rule.host_id = "other".into();
+        assert!(open(&rule, &rt).is_err());
+        rule.host_id = "remote".into();
+        rule.target_port = 13085;
+        rule.target_host = "127.0.0.1".into();
+        rule.id = "legacy".into();
+        rt.rule_id.clone_from(&rule.id);
+        assert_eq!(open(&rule, &rt).unwrap(), "http://127.0.0.1:50881/");
+        let mut other = profile.clone();
+        other.id = "second-service".into();
+        assert!(linked_service_url(
+            &[profile.clone(), other],
+            &profile,
+            &rule,
+            &host,
+            &rt,
+            DirectProtocol::Http
+        )
+        .is_err());
     }
     #[test]
     fn remote_listener_is_explicit_and_dynamic_has_no_service_endpoint() {

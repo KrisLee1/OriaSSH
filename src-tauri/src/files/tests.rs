@@ -413,6 +413,9 @@ impl russh_sftp::server::Handler for Sftp {
         offset: u64,
         data: Vec<u8>,
     ) -> std::result::Result<Status, Self::Error> {
+        if self.root.join(".paced-writes").is_file() {
+            tokio::time::sleep(Duration::from_millis(8)).await;
+        }
         if !self.delayed && self.root.join(".delay-first-write").exists() {
             self.delayed = true;
             tokio::time::sleep(Duration::from_millis(3100)).await;
@@ -748,6 +751,9 @@ fn manager_with_session(fs: Fs, journal: PathBuf) -> Arc<Manager> {
             id: "session".into(),
             host_id: "fixture".into(),
             host_name: "loopback".into(),
+            login_id: "primary:fixture".into(),
+            user: "tester".into(),
+            route_key: None,
             phase: "connected".into(),
             route: vec!["fixture".into()],
             fingerprint: None,
@@ -926,6 +932,9 @@ async fn attach_destination(m: &Manager, root: PathBuf) -> tokio::task::JoinHand
             id: "destination-session".into(),
             host_id: "destination-host".into(),
             host_name: "Destination".into(),
+            login_id: "primary:destination-host".into(),
+            user: "tester".into(),
+            route_key: None,
             phase: "connected".into(),
             route: vec!["destination-jump".into(), "destination-host".into()],
             fingerprint: None,
@@ -1527,6 +1536,28 @@ fn corrupt_journal_is_preserved() {
     m.save();
     assert_eq!(std::fs::read(path).unwrap(), b"not-json");
 }
+#[tokio::test]
+async fn releasing_file_references_removes_only_the_closed_sessions_eviction_entries() {
+    let dir = tempfile::tempdir().unwrap();
+    let manager = Manager::new(dir.path().join("journal.json"));
+    let listing = manager
+        .directory(None, dir.path().to_str().unwrap().into())
+        .await
+        .unwrap();
+    let mut entry = manager.entry(&listing.id).unwrap();
+    entry.session = Some("one".into());
+    let closed = manager.register(entry.clone()).unwrap();
+    entry.session = Some("two".into());
+    let kept = manager.register(entry).unwrap();
+    manager.release_refs("one");
+    assert!(manager.entry(&closed).is_err());
+    assert!(manager.entry(&kept).is_ok());
+    assert!(manager.entry(&listing.id).is_ok());
+    let order = manager.ref_order.lock().unwrap();
+    assert!(!order.contains(&closed));
+    assert!(order.contains(&kept));
+}
+
 #[tokio::test]
 async fn computer_lists_real_roots_without_network_or_mutation_authority() {
     let t = tempfile::tempdir().unwrap();

@@ -28,15 +28,15 @@ export function collect(platform, output) {
   };
   let updater;
   if (spec.os === 'macos') {
-    const app = path.join(bundle, 'macos/OriaTunnel.app');
-    verifyLicense(path.join(app, 'Contents/Resources/licenses/OriaTunnel_GPL-3.0.txt'));
+    const app = path.join(bundle, 'macos/OriaSSH.app');
+    verifyLicense(path.join(app, 'Contents/Resources/licenses/OriaSSH_GPL-3.0.txt'));
     run('codesign', ['--verify', '--deep', '--strict', app], { env: clean });
     run('bash', [path.join(root, 'scripts/release/stapler.sh'), 'validate', app], { env: clean });
     run('spctl', ['--assess', '--type', 'execute', app], { env: clean });
     const arch = spec.arch === 'aarch64' ? 'aarch64' : 'x64';
-    const dmg = path.join(bundle, 'dmg', `OriaTunnel_${version}_${arch}.dmg`);
+    const dmg = path.join(bundle, 'dmg', `OriaSSH_${version}_${arch}.dmg`);
     copy(dmg); copy(dmg.replace(/\.dmg$/, '.zip'));
-    updater = path.join(output, `OriaTunnel_${version}_${spec.arch}.app.tar.gz`);
+    updater = path.join(output, `OriaSSH_${version}_${spec.arch}.app.tar.gz`);
     // The updater strips one leading directory from every entry. AppleDouble
     // sidecar entries must not appear as unrelated roots in this archive.
     run('tar', ['-czf', updater, '-C', path.dirname(app), path.basename(app)], { env: { ...clean, COPYFILE_DISABLE: '1' } });
@@ -44,23 +44,23 @@ export function collect(platform, output) {
     try {
       run('tar', ['-xzf', updater, '-C', unpacked], { env: clean });
       const restored = path.join(unpacked, path.basename(app));
-      verifyLicense(path.join(restored, 'Contents/Resources/licenses/OriaTunnel_GPL-3.0.txt'));
+      verifyLicense(path.join(restored, 'Contents/Resources/licenses/OriaSSH_GPL-3.0.txt'));
       if (fs.readdirSync(unpacked).some(name => name !== path.basename(app))) throw new Error('Updater TAR contains unexpected root entries.');
       run('codesign', ['--verify', '--deep', '--strict', restored], { env: clean });
       run('bash', [path.join(root, 'scripts/release/stapler.sh'), 'validate', restored], { env: clean });
     } finally { fs.rmSync(unpacked, { recursive: true, force: true }); }
     copied.push(updater);
   } else {
-    updater = copy(path.join(bundle, 'nsis', `OriaTunnel_${version}_${spec.arch}-setup.exe`));
+    updater = copy(path.join(bundle, 'nsis', `OriaSSH_${version}_${spec.arch}-setup.exe`));
     const nsis = path.join(path.dirname(bundle), 'nsis', spec.arch);
     verifyLicense(path.join(nsis, 'license_file'), true);
     const script = fs.readFileSync(path.join(nsis, 'installer.nsi'), 'utf8');
-    const resource = script.split(/\r?\n/).find(line => line.trimStart().startsWith('File /a ') &&  /"\/oname=licenses[\\/]OriaTunnel_GPL-3\.0\.txt"/.test(line));
+    const resource = script.split(/\r?\n/).find(line => line.trimStart().startsWith('File /a ') &&  /"\/oname=licenses[\\/]OriaSSH_GPL-3\.0\.txt"/.test(line));
     const source = resource?.match(/ "([^"]+)"\s*$/)?.[1];
     if (!source) throw new Error('NSIS installer is missing the installed application license resource.');
     verifyLicense(source);
     // Inspect the app PE, since NSIS bootstraps are x86 even for ARM64 installs.
-    const executable = fs.readFileSync(path.join(root, 'src-tauri/target', spec.target, 'release/oria-tunnel.exe'));
+    const executable = fs.readFileSync(path.join(root, 'src-tauri/target', spec.target, 'release/oria-ssh.exe'));
     const pe = executable.readUInt32LE(0x3c);
     const machine = executable.readUInt16LE(pe + 4);
     if (executable.toString('ascii', pe, pe + 4) !== 'PE\0\0' || machine !== (spec.arch === 'arm64' ? 0xaa64 : 0x8664)) throw new Error('Application PE architecture does not match its release platform.');

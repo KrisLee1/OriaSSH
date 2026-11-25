@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import { applyNodeChanges, Position, type Node } from "@xyflow/react";
 import {
   canvasLayout,
+  readCanvasLayout,
   localPortSide,
   localCardSize,
+  localPortOffsets,
   reconcileCanvasNodes,
 } from "./canvas-state";
 import { emptyHost, emptyRule } from "./rule-model";
@@ -14,6 +16,12 @@ const initial = (): Node[] => [
   { id: "host:a", position: { x: 480, y: 0 }, data: { sent: 0 } },
 ];
 describe("canvas state across dragging and runtime snapshots", () => {
+  it("restores valid saved positions even when a neighboring entry is damaged", () => {
+    for (const value of [null, "{", "null", "[]", "42"]) expect(readCanvasLayout(value)).toEqual({});
+    expect(readCanvasLayout(JSON.stringify({
+      local: { x: -200, y: 0 }, "host:a": { x: "100", y: 4 }, "host:b": null,
+    }))).toEqual({ local: { x: -200, y: 0 } });
+  });
   it("retains the entire node collection when no rendered fact or geometry changed", () => {
     const nodes = initial();
     expect(reconcileCanvasNodes(nodes, structuredClone(nodes))).toBe(nodes);
@@ -100,6 +108,32 @@ describe("canvas state across dragging and runtime snapshots", () => {
     expect(mixed.width / 121).toBeGreaterThanOrEqual(64);
     expect(mixed.height / 201).toBeGreaterThanOrEqual(30);
     expect(localCardSize([])).toEqual({ width: 200, height: 164 });
+  });
+  it("separates duplicate saved ports and reserves space where adjacent sides meet", () => {
+    const pinned = (side: Position, offset: number) => ({
+      side,
+      custom: { side, offset },
+    });
+    const ports = [
+      pinned(Position.Top, 0.99),
+      pinned(Position.Top, 0.99),
+      pinned(Position.Right, 0.01),
+      pinned(Position.Right, 0.01),
+      pinned(Position.Right, 0.5),
+      pinned(Position.Right, 0.99),
+      pinned(Position.Bottom, 0.99),
+    ];
+    const size = localCardSize(ports);
+    const offsets = localPortOffsets(ports, size);
+    const [leftTop, rightTop] = offsets.slice(0, 2).map((offset) => offset * size.width);
+    const right = offsets.slice(2, 6).map((offset) => offset * size.height);
+    expect(rightTop - leftTop).toBeCloseTo(64);
+    expect(right[0]).toBeCloseTo(38);
+    expect(size.height - right.at(-1)!).toBeCloseTo(38);
+    for (let index = 1; index < right.length; index++) {
+      expect(right[index] - right[index - 1]).toBeGreaterThanOrEqual(30 - 1e-8);
+    }
+    expect(ports[0].custom.offset).toBe(0.99);
   });
   it("retains measured dimensions and selection throughout a long drag with fresh runtime data", () => {
     let nodes = applyNodeChanges(

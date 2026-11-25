@@ -88,6 +88,7 @@ export default function TerminalView({
 }) {
   const { t } = useTranslation("terminal");
   const container = useRef<HTMLDivElement>(null),
+    terminalHost = useRef<HTMLDivElement>(null),
     terminal = useRef<Terminal | null>(null),
     search = useRef<SearchAddon | null>(null);
   const shell = useShellEditor(
@@ -554,7 +555,7 @@ export default function TerminalView({
     else requestFit.current?.();
   }, [visible]);
   useEffect(() => {
-    const element = container.current;
+    const element = terminalHost.current;
     if (!element) return;
     let disposed = false;
     let cleanup: (() => void) | undefined;
@@ -1306,6 +1307,7 @@ export default function TerminalView({
                       inputRef={shell.editorInput}
                       cwd={shell.prompt.cwd}
                       powershell={shell.prompt.powershell}
+                      profile={shell.prompt.completionProfile}
                       visible={active}
                       submit={(value) =>
                         terminal.current &&
@@ -1348,7 +1350,9 @@ export default function TerminalView({
                       "ssh-terminal-screen" +
                       (screenHidden ? " shell-screen-hidden" : "")
                     }
-                  />
+                  >
+                    <div ref={terminalHost} className="shell-terminal-grid" />
+                  </div>
                 </div>
               </div>
             </div>

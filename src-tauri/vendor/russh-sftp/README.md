@@ -1,6 +1,6 @@
 # Russh SFTP
 
-OriaTunnel uses the Apache-2.0 sources from the 3.0.1 crate (upstream commit
+OriaSSH uses the Apache-2.0 sources from the 3.0.1 crate (upstream commit
 `e8de8f903cb019f32beb26cc1195c7c71bef121f`). The local changes preserve
 opaque directory/file handles as bytes across protocol, raw client, file I/O
 and server APIs, and consume SFTP v3 extended attributes in directory replies.

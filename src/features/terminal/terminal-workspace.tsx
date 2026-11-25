@@ -1,5 +1,6 @@
+import { defaultLoginId, resolvedLogin } from "../hosts/login-identities";
 import { formatUiError } from "@/lib/ui-message";
-import { serviceTarget } from "@/features/commands/service-target";
+import { serviceLoginId, serviceTarget } from "@/features/commands/service-target";
 import {
   createContext,
   lazy,
@@ -20,7 +21,6 @@ import { listen } from "@tauri-apps/api/event";
 import { AnimatePresence } from "motion/react";
 import { useTranslation } from "react-i18next";
 import {
-  TerminalIcon,
   SquareTerminalIcon,
   XIcon,
   PanelsTopLeftIcon,
@@ -34,7 +34,8 @@ import { AuthenticationField } from "@/features/hosts/authentication-field";
 import { addedHosts } from "@/features/hosts/host-collection";
 import { jumpHosts } from "@/features/tunnels/rule-model";
 import { CommandResult } from "@/features/commands/preset-commands";
-import { mergeRuns } from "@/features/commands/command-model";
+import { commandActive, mergeRuns, serviceForwardReachableAt } from "@/features/commands/command-model";
+import { rememberBackgroundService, systemdService } from "@/features/commands/systemd-service";
 import * as bridge from "@/lib/bridge";
 import type {
   CommandRun,
@@ -77,9 +78,13 @@ interface WorkspaceApi {
     action: PresetAction,
     secrets: Record<string, string>,
     rememberHostIds: string[],
-    ruleId?: string,
+    ruleId?: string, loginId?: string,
   ) => Promise<void>;
-  showCommand: (run: CommandRun) => void;
+  showCommand: (run: CommandRun, onRetry?: (run: CommandRun) => void) => void;
+  revealCommand: (run: CommandRun, onRetry?: (run: CommandRun) => void) => void;
+  revealSession: (id: string) => void;
+  terminateCommand: (id: string) => void;
+  commandTerminating: (id: string) => boolean;
   serviceBusy: (id: string) => boolean;
   busy: boolean;
   foregroundSession: (
@@ -136,11 +141,7 @@ export function OpenTerminalButton({
         api.openHost(hostId);
       }}
     >
-      {workspace ? (
-        <TerminalIcon aria-hidden="true" />
-      ) : (
-        <SquareTerminalIcon aria-hidden="true" />
-      )}
+      <SquareTerminalIcon aria-hidden="true" />
     </Button>
   );
 }
@@ -149,6 +150,8 @@ export function TerminalWorkspaceProvider({
   viewerSessions,
   preferredHost,
   onChooseHost,
+  commandSettingsActive = false,
+  openCommandSettings,
   children,
 }: {
   data:
@@ -157,6 +160,8 @@ export function TerminalWorkspaceProvider({
   viewerSessions?: TerminalSession[];
   preferredHost?: string;
   onChooseHost?: (id: string) => void;
+  commandSettingsActive?: boolean;
+  openCommandSettings?: () => void;
   children: ReactNode;
 }) {
   const { t } = useTranslation("terminal");
@@ -164,18 +169,25 @@ export function TerminalWorkspaceProvider({
   const [sessions, setSessions] = useState<TerminalSession[]>([]),
     [commands, setCommands] = useState<CommandRun[]>([]);
   const [commandTabs, setCommandTabs] = useState<string[]>([]);
+  const [commandClose, setCommandClose] = useState<{
+    id: string;
+    choice?: "terminate" | "background";
+  } | null>(null);
+  const [terminatingCommands, setTerminatingCommands] = useState<string[]>([]);
   const [selected, setSelected] = useState("");
   const [expanded, setExpanded] = useState(false);
+  const keepCommandFocus = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLElement>(null);
   const tabListRef = useRef<HTMLDivElement>(null);
   const [tabEdges, setTabEdges] = useState({ left: false, right: false });
   const [error, setError] = useState("");
   const [draft, setDraft] = useState<{
     hostId: string;
+    loginId?: string;
     noEnvironment: boolean;
     fallback: boolean;
     replaceId?: string;
-    profile?: { service: RemoteService; action: PresetAction; ruleId?: string };
+    profile?: { service: RemoteService; action: PresetAction; ruleId?: string; loginId?:string };
   } | null>(null);
   const [secrets, setSecrets] = useState<Record<string, string>>({}),
     [remember, setRemember] = useState<Record<string, boolean>>({});
@@ -193,6 +205,7 @@ export function TerminalWorkspaceProvider({
   const automaticAuthRequests = useRef(new Map<string, string | undefined>());
   const promptedSessions = useRef(new Set<string>());
   const automaticCommandAuth = useRef(new Set<string>());
+  const commandRetry = useRef<(run: CommandRun) => void>(null);
   const merge = useCallback((next: TerminalSession[]) => {
     const replacements = new Map(replacementRequests.current);
     for (const session of next) {
@@ -252,9 +265,9 @@ export function TerminalWorkspaceProvider({
       void jobs.then((off) => off()).catch(() => {});
     };
   }, [merge, viewer]);
-  const showCommand = useCallback(
-    (run: CommandRun) => {
-      automaticCommandAuth.current.add(run.id);
+  const revealCommand = useCallback(
+    (run: CommandRun, onRetry?: (run: CommandRun) => void) => {
+      if (onRetry) commandRetry.current = onRetry;
       acceptCommand(run);
       setCommandTabs((ids) => (ids.includes(run.id) ? ids : [...ids, run.id]));
       setSelected(run.id);
@@ -262,6 +275,80 @@ export function TerminalWorkspaceProvider({
     },
     [acceptCommand],
   );
+  const showCommand = useCallback(
+    (run: CommandRun, onRetry?: (run: CommandRun) => void) => {
+      automaticCommandAuth.current.add(run.id);
+      revealCommand(run, onRetry);
+    },
+    [revealCommand],
+  );
+  const removeCommandTab = useCallback((id: string) => {
+    setCommandTabs((ids) => ids.filter((value) => value !== id));
+    setSelected((current) =>
+      current === id
+        ? sessions[0]?.id || commandTabs.find((value) => value !== id) || ""
+        : current,
+    );
+  }, [commandTabs, sessions]);
+  const terminateCommand = useCallback((id: string) => {
+    if (terminatingCommands.includes(id)) return;
+    setTerminatingCommands((ids) => [...ids, id]);
+    void bridge.cancelCommand(id).catch((error) => {
+      setTerminatingCommands((ids) => ids.filter((value) => value !== id));
+      setCommandClose((close) => close?.id === id ? null : close);
+      setError(String(error));
+    });
+  }, [terminatingCommands]);
+  const closingCommand = commands.find((run) => run.id === commandClose?.id);
+  const closingService = "runtimes" in data
+    ? data.services?.find((service) =>
+        service.id === closingCommand?.serviceId &&
+        service.revision === closingCommand.serviceRevision &&
+        service.executionEnabled !== false,
+      )
+    : undefined;
+  const closingRuleId = closingCommand && (closingCommand.workflowRuleId ?? `host:${closingCommand.hostId}`);
+  const closingTarget = closingService && serviceTarget(closingService, data, closingRuleId);
+  const closingProfile = data.hosts.find((host) => host.id === closingTarget?.hostId);
+  const closingHost = closingCommand && resolvedLogin(
+    closingProfile,
+    serviceLoginId(closingService, closingProfile, closingCommand.loginId),
+  );
+  const lifecycle = systemdService(closingService);
+  const managedClose = closingHost && closingCommand && lifecycle?.startId === closingCommand.actionId &&
+    closingHost.id === closingCommand.hostId &&
+    closingCommand.endpoint === `${closingHost.user}@${closingHost.address}:${closingHost.port}`
+    ? lifecycle : undefined;
+  useEffect(() => {
+    setTerminatingCommands((ids) => {
+      const pending = ids.filter((id) => commands.some((run) => run.id === id && commandActive(run)));
+      return pending.length === ids.length ? ids : pending;
+    });
+    if (!commandClose?.choice || !closingCommand || commandActive(closingCommand)) return;
+    setCommandClose(null);
+    if (commandClose.choice === "terminate" && managedClose && closingService) {
+      void bridge.startCommand({
+        serviceId: closingService.id,
+        revision: closingService.revision,
+        actionId: managedClose.stop.id,
+        ruleId: closingRuleId,
+        loginId: closingCommand.loginId,
+        requestId: crypto.randomUUID(),
+        confirmed: true,
+        secrets: {},
+        rememberHostIds: [],
+      }).then((run) => {
+        removeCommandTab(closingCommand.id);
+        showCommand(run);
+      }).catch((error) => setError(String(error)));
+    } else if (commandClose.choice === "background"
+      ? !!managedClose && closingCommand.phase === "succeeded"
+      : closingCommand.error !== "remoteUnknown") {
+      if (commandClose.choice === "background" && managedClose)
+        rememberBackgroundService(closingCommand);
+      removeCommandTab(closingCommand.id);
+    }
+  }, [commands, commandClose, closingCommand, closingService, closingRuleId, managedClose, removeCommandTab, showCommand]);
   const openHost = (hostId?: string) => {
     if (expanded) panelRef.current?.focus();
     setExpanded(true);
@@ -294,8 +381,8 @@ export function TerminalWorkspaceProvider({
     noEnvironment: boolean,
     values: Record<string, string>,
     remembered: string[],
-    profile?: { service: RemoteService; action: PresetAction; ruleId?: string },
-    options?: { replaceId?: string; automatic?: boolean },
+    profile?: { service: RemoteService; action: PresetAction; ruleId?: string; loginId?:string },
+    options?: { replaceId?: string; automatic?: boolean; loginId?: string },
   ) => {
     if (submitting.current) return;
     submitting.current = true;
@@ -310,11 +397,14 @@ export function TerminalWorkspaceProvider({
       return;
     }
     try {
+      const loginId = profile
+        ? profile.loginId
+        : options?.loginId ?? defaultLoginId(data.hosts.find((host) => host.id === hostId));
       const baseKey = profile
-        ? `${profile.service.id}:${profile.service.revision}:${profile.action.id}`
+        ? `${profile.service.id}:${profile.service.revision}:${profile.action.id}:${hostId}:${loginId || ""}`
         : hostId === null
           ? "local"
-          : `shell:${hostId}`;
+          : `shell:${hostId}:${loginId || ""}`;
       const key = previous ? `${baseKey}:replace:${previous.id}` : baseKey;
       const requestId = requests.current.get(key) || crypto.randomUUID();
       requests.current.set(key, requestId);
@@ -326,6 +416,7 @@ export function TerminalWorkspaceProvider({
           ? await bridge.openLocalTerminal(requestId, clientId, 80, 24)
           : await bridge.openTerminal({
               hostId,
+              loginId,
               noLocalEnvironment: profile ? noEnvironment : true,
               clientId,
               requestId,
@@ -392,7 +483,7 @@ export function TerminalWorkspaceProvider({
     action,
     values,
     remembered,
-    ruleId,
+    ruleId,loginId,
   ) => {
     const target = serviceTarget(service, data, ruleId);
     if (!target) throw new Error("serviceTargetRequired");
@@ -401,7 +492,7 @@ export function TerminalWorkspaceProvider({
       service.noLocalEnvironment,
       values,
       remembered,
-      { service, action, ruleId },
+      { service, action, ruleId,loginId },
       { automatic: true },
     );
   };
@@ -561,15 +652,16 @@ export function TerminalWorkspaceProvider({
       </Button>
     );
   };
-  const route = draft
-    ? data.hosts.find((h) => h.id === draft.hostId)
-    : undefined;
+  const draftHost = data.hosts.find((host) => host.id === draft?.hostId);
+  const route = draft?.profile
+    ? resolvedLogin(draftHost, serviceLoginId(draft.profile.service, draftHost, draft.profile.loginId))
+    : resolvedLogin(draftHost, draft?.loginId ?? defaultLoginId(draftHost));
   const routeHosts = route ? [...jumpHosts(data.hosts, route), route] : [];
   const trust = sessions.find(
     (s) => s.phase === "verifying-host" && terminalActive(s) && s.fingerprint,
   );
   useEffect(() => {
-    if (busy || draft || closing || trust) return;
+    if (busy || draft || closing || commandClose || trust) return;
     const failed = sessions.find(
       (session) =>
         automaticAuthRequests.current.has(session.requestId) &&
@@ -597,6 +689,7 @@ export function TerminalWorkspaceProvider({
     const profile = unsubmittedPreset(failed, data.services || []);
     setDraft({
       hostId: failed.hostId,
+      loginId: failed.loginId ?? undefined,
       noEnvironment: profile ? profile.service.noLocalEnvironment : true,
       fallback: true,
       replaceId: failed.id,
@@ -605,7 +698,7 @@ export function TerminalWorkspaceProvider({
     setSecrets({});
     setRemember({});
     setError(failed.error || "");
-  }, [sessions, data, clientId, busy, draft, closing, trust, t]);
+  }, [sessions, data, clientId, busy, draft, closing, commandClose, trust, t]);
   const tabSignature = [
     ...groups.map((group) => group.tab),
     ...commandTabs,
@@ -643,7 +736,15 @@ export function TerminalWorkspaceProvider({
     () => ({
       openHost: (hostId) => latestActions.current.openHost(hostId),
       openPreset: (...args) => latestActions.current.openPreset(...args),
-      showCommand: (run) => latestActions.current.showCommand(run),
+      showCommand: (...args) => latestActions.current.showCommand(...args),
+      revealCommand,
+      revealSession: (id) => {
+        if (!sessions.some((session) => session.id === id && session.clientId === clientId)) return;
+        setSelected(id);
+        setExpanded(true);
+      },
+      terminateCommand,
+      commandTerminating: (id) => terminatingCommands.includes(id),
       serviceBusy: (id) =>
         sessions.some(
           (session) => session.serviceId === id && terminalActive(session),
@@ -674,7 +775,7 @@ export function TerminalWorkspaceProvider({
         if (session) await latestActions.current.close([session]);
       },
     }),
-    [sessions, busy, clientId, data.rules],
+    [sessions, busy, clientId, data.rules, revealCommand, terminateCommand, terminatingCommands],
   );
   const workspace = (
     <Context.Provider value={workspaceApi}>
@@ -687,7 +788,7 @@ export function TerminalWorkspaceProvider({
         className="terminal-workspace"
         actions={
           <>
-            <SavedCommandsButton />
+            <SavedCommandsButton openSettings={openCommandSettings} />
             <TerminalTargets
               menu
               hosts={targets}
@@ -813,40 +914,46 @@ export function TerminalWorkspaceProvider({
                   </div>
                 );
               })}
-              {commandTabs.map((id) => (
-                <div className="terminal-tab-entry" key={id}>
-                  <TabsTrigger value={id}>
-                    {(commands
-                      .find((r) => r.id === id)
-                      ?.actionLabel?.startsWith("$")
-                      ? t(
-                          `service.${commands.find((r) => r.id === id)!.actionLabel.slice(1)}`,
-                          { ns: "commands" },
-                        )
-                      : commands.find((r) => r.id === id)?.actionLabel) ||
-                      t("command")}
-                  </TabsTrigger>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label={t("closeOutput")}
-                    onClick={() => {
-                      setCommandTabs((ids) =>
-                        ids.filter((value) => value !== id),
-                      );
-                      if (selected === id)
-                        setSelected(
-                          sessions[0]?.id ||
-                            commandTabs.find((value) => value !== id) ||
-                            "",
-                        );
-                    }}
-                  >
-                    <XIcon aria-hidden="true" />
-                  </Button>
-                </div>
-              ))}
+              {commandTabs.map((id) => {
+                const run = commands.find((item) => item.id === id);
+                const actionLabel = run?.actionLabel?.startsWith("$")
+                  ? t(`service.${run.actionLabel.slice(1)}`, { ns: "commands" })
+                  : run?.actionLabel || t("command");
+                const service =
+                  "runtimes" in data
+                    ? data.services?.find((service) => service.id === run?.serviceId)
+                    : undefined;
+                const label = service?.name
+                  ? `${service.name} · ${actionLabel}`
+                  : actionLabel;
+                const managed = systemdService(service);
+                const confirmClose = !!run && (commandActive(run) ||
+                  (service?.revision === run.serviceRevision &&
+                    managed?.startId === run.actionId && run.phase === "succeeded"));
+                return (
+                  <div className="terminal-tab-entry" key={id}>
+                    <TabsTrigger value={id} title={label}>
+                      <span className="terminal-tab-label">{label}</span>
+                    </TabsTrigger>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={t("closeOutput")}
+                      aria-haspopup={confirmClose ? "dialog" : undefined}
+                      disabled={terminatingCommands.includes(id)}
+                      onClick={() => {
+                        if (confirmClose) {
+                          setError("");
+                          setCommandClose({ id });
+                        } else removeCommandTab(id);
+                      }}
+                    >
+                      <XIcon aria-hidden="true" />
+                    </Button>
+                  </div>
+                );
+              })}
             </TabsList>
             <div className="terminal-view-area">
               <TerminalSplitPanels
@@ -896,6 +1003,9 @@ export function TerminalWorkspaceProvider({
                         session={session}
                         busy={busy}
                         retryProfile={!!profile}
+                        reachableAt={session.phase === "running" && session.serviceId && session.serviceRevision && "runtimes" in data
+                          ? serviceForwardReachableAt(data, { ...session, serviceId: session.serviceId, serviceRevision: session.serviceRevision }, session.ruleId)
+                          : undefined}
                         reconnect={() => {
                           if (session.local) void connectLocal(session.id);
                           else if (!profile)
@@ -969,14 +1079,12 @@ export function TerminalWorkspaceProvider({
                         automaticCommandAuth.current.delete(selectedCommand.id)
                       }
                       onRerun={showCommand}
+                      onRetry={commandRetry.current ?? undefined}
                       run={selectedCommand}
+                      terminating={terminatingCommands.includes(selectedCommand.id)}
                       accept={acceptCommand}
                       onError={fail}
-                      onCancel={() =>
-                        void bridge
-                          .cancelCommand(selectedCommand.id)
-                          .catch((e) => setError(String(e)))
-                      }
+                      onCancel={() => terminateCommand(selectedCommand.id)}
                     />
                   </div>
                 )}
@@ -987,6 +1095,35 @@ export function TerminalWorkspaceProvider({
         )}
       </TerminalPanel>
       <AnimatePresence onExitComplete={() => focusActiveTerminal()}>
+        {commandClose && closingCommand && (
+          <Modal
+            key="close-command"
+            title={t("closeOutput")}
+            description={t(managedClose ? "managedCommandCloseHint" : "foregroundCommandCloseHint")}
+            initialFocus={keepCommandFocus}
+            close={() => {
+              if (!commandClose.choice) setCommandClose(null);
+            }}
+          >
+            <code>{closingCommand.endpoint}</code>
+            <ModalActions>
+              <Button ref={keepCommandFocus} type="button" variant="ghost" disabled={!!commandClose.choice} onClick={() => setCommandClose(null)}>
+                {t("cancel", { ns: "commands" })}
+              </Button>
+              <Button type="button" variant="destructive" disabled={!!commandClose.choice} onClick={() => {
+                setCommandClose({ id: closingCommand.id, choice: "terminate" });
+                if (commandActive(closingCommand)) terminateCommand(closingCommand.id);
+              }}>
+                {commandClose.choice === "terminate" ? t("terminating") : managedClose ? t("terminateService") : t("terminateCommand", { ns: "commands" })}
+              </Button>
+              <Button type="button" variant="primary-soft" disabled={!managedClose || !!commandClose.choice} onClick={() => {
+                setCommandClose({ id: closingCommand.id, choice: "background" });
+              }}>
+                {t(commandClose.choice === "background" ? "waitingForCommand" : "continueInBackground")}
+              </Button>
+            </ModalActions>
+          </Modal>
+        )}
         {draft && (
           <Modal
             key="connect"
@@ -1010,6 +1147,7 @@ export function TerminalWorkspaceProvider({
                   {
                     replaceId: draft.replaceId,
                     automatic: true,
+                    loginId: draft.loginId,
                   },
                 ).catch(() => {});
               }}
@@ -1161,6 +1299,6 @@ export function TerminalWorkspaceProvider({
     </Context.Provider>
   );
   return (
-    <SavedCommandsProvider active={expanded}>{workspace}</SavedCommandsProvider>
+    <SavedCommandsProvider active={expanded || commandSettingsActive}>{workspace}</SavedCommandsProvider>
   );
 }

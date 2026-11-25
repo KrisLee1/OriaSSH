@@ -1,6 +1,9 @@
+import { resolvedLogin } from "../hosts/login-identities";
+import { serviceLoginId } from "./service-target";
 import { formatUiError } from "@/lib/ui-message";
 import { equalJsonValue } from "@/lib/json-equal";
-import { useEffect, useId, useState, useRef } from "react";
+import { useEffect, useId, useState, useRef, type ReactNode } from "react";
+import { ChevronDownIcon } from "lucide-react";
 import { AnimatePresence } from "motion/react";
 import { Modal, ModalActions } from "@/components/tunnel-form";
 import { AuthenticationField } from "@/features/hosts/authentication-field";
@@ -9,6 +12,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ParameterField, ParameterSwitch } from "@/components/parameter-field";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
@@ -73,30 +77,30 @@ export function ServiceState({
   observation?: ServiceObservation;
 }) {
   const { t, i18n } = useTranslation("commands");
+  const facts = (["status", "health"] as const).flatMap((kind) => {
+    const fact = observation?.[kind];
+    return fact && fact.value !== "unknown" && fact.value !== "unverified"
+      ? [{ kind, fact }]
+      : [];
+  });
+  if (!facts.length) return null;
   return (
     <dl className="service-facts">
-      {(["status", "health"] as const).map((kind) => {
-        const fact = observation?.[kind];
-        return (
-          <div key={kind}>
-            <dt>{t(`service.${kind}`)}</dt>
-            <dd>
-              {t(
-                `service.value.${fact?.value || (kind === "status" ? "unknown" : "unverified")}`,
-              )}
-              {fact?.expired && ` · ${t("service.expired")}`}
-              {fact?.checkedAt && (
-                <small>
-                  {t("service.checkedAt")}{" "}
-                  {new Date(fact.checkedAt).toLocaleString(
-                    i18n.resolvedLanguage,
-                  )}
-                </small>
-              )}
-            </dd>
-          </div>
-        );
-      })}
+      {facts.map(({ kind, fact }) => (
+        <div key={kind}>
+          <dt>{t(`service.${kind}`)}</dt>
+          <dd
+            title={
+              fact.checkedAt === null
+                ? undefined
+                : `${t("service.checkedAt")} ${new Date(fact.checkedAt).toLocaleString(i18n.resolvedLanguage)}`
+            }
+          >
+            {t(`service.value.${fact.value}`)}
+            {fact.expired && ` · ${t("service.expired")}`}
+          </dd>
+        </div>
+      ))}
     </dl>
   );
 }
@@ -207,6 +211,28 @@ function CodesField({
     </label>
   );
 }
+function ControlDisclosure({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <details
+      className="editor-disclosure service-advanced-disclosure"
+      onInvalidCapture={(event) => {
+        event.currentTarget.open = true;
+      }}
+    >
+      <summary>
+        {label}
+        <ChevronDownIcon size={14} aria-hidden="true" />
+      </summary>
+      <div className="service-advanced-disclosure-body">{children}</div>
+    </details>
+  );
+}
 export function ControlEditor({
   service,
   onChange,
@@ -217,11 +243,12 @@ export function ControlEditor({
   const { t } = useTranslation("commands"),
     id = useId();
   const c = service.control || defaultControl();
+  const { statusProbe, healthProbe } = c;
   const status = service.actions.filter(
     (a) => a.kind === "status" && a.mode !== "terminal",
   );
   const starts = service.actions.filter(
-    (a) => a.kind === "start" && a.mode !== "terminal",
+    (a) => a.kind === "start" && a.mode !== "terminal" && a.timeoutSecs > 0,
   );
   const patch = (value: Partial<ServiceControl>) =>
     onChange({ ...c, ...value });
@@ -231,7 +258,7 @@ export function ControlEditor({
     items: { value: string; label: string }[],
     change: (value: string) => void,
   ) => (
-    <label className="field">
+    <div className="field service-advanced-select">
       <span>{name}</span>
       <Select
         items={items}
@@ -241,7 +268,7 @@ export function ControlEditor({
         <SelectTrigger aria-label={name}>
           <SelectValue />
         </SelectTrigger>
-        <SelectContent>
+        <SelectContent alignItemWithTrigger={false}>
           {items.map((item) => (
             <SelectItem key={item.value} value={item.value}>
               {item.label}
@@ -249,7 +276,7 @@ export function ControlEditor({
           ))}
         </SelectContent>
       </Select>
-    </label>
+    </div>
   );
   const number = (
     key: string,
@@ -258,7 +285,7 @@ export function ControlEditor({
     max: number,
     change: (n: number) => void,
   ) => (
-    <label className="field">
+    <label className="field service-advanced-number">
       <span>{t(`service.${key}`)}</span>
       <Input
         type="number"
@@ -283,13 +310,12 @@ export function ControlEditor({
     />
   );
   return (
-    <fieldset className="preset-action-editor service-control-settings">
-      <legend>{t("service.settings")}</legend>
-      <p className="muted">{t("service.probeHint")}</p>
-      <div className="service-settings-grid">
+    <>
+      <fieldset className="service-advanced-group">
+        <legend>{t("service.status")}</legend>
         {select(
           t("service.statusAction"),
-          c.statusProbe?.actionId || "none",
+          statusProbe?.actionId || "none",
           [
             { value: "none", label: t("service.disabled") },
             ...status.map((a) => ({ value: a.id, label: a.label })),
@@ -308,6 +334,153 @@ export function ControlEditor({
                     },
             }),
         )}
+        {statusProbe && (
+          <>
+            {service.actions.find((a) => a.id === statusProbe.actionId)
+              ?.confirm && (
+              <p className="inline-error">{t("service.statusConfirmHint")}</p>
+            )}
+            <ControlDisclosure label={t("service.statusRules")}>
+              {select(
+                t("service.mapping"),
+                statusProbe.mode,
+                ["output", "exitCode", "json", "vncSessions"].map((value) => ({
+                  value,
+                  label: t(`service.mappingMode.${value}`),
+                })),
+                (mode) =>
+                  patch({
+                    statusProbe: {
+                      ...statusProbe,
+                      mode: mode as typeof statusProbe.mode,
+                    },
+                  }),
+              )}
+              {statusProbe.mode === "exitCode" && (
+                <div className="service-advanced-options">
+                  {codes(
+                    "runningCodes",
+                    statusProbe.runningCodes,
+                    (runningCodes) =>
+                      patch({ statusProbe: { ...statusProbe, runningCodes } }),
+                  )}
+                  {codes(
+                    "stoppedCodes",
+                    statusProbe.stoppedCodes,
+                    (stoppedCodes) =>
+                      patch({ statusProbe: { ...statusProbe, stoppedCodes } }),
+                  )}
+                  {codes(
+                    "failedCodes",
+                    statusProbe.failedCodes,
+                    (failedCodes) =>
+                      patch({ statusProbe: { ...statusProbe, failedCodes } }),
+                  )}
+                </div>
+              )}
+              {statusProbe.mode === "json" && (
+                <p className="muted service-advanced-hint">
+                  {t("service.jsonHint")}
+                </p>
+              )}
+            </ControlDisclosure>
+          </>
+        )}
+      </fieldset>
+
+      <section
+        className="service-advanced-group"
+        aria-labelledby={`${id}-health-heading`}
+      >
+        <div className="service-switch-field service-advanced-switch">
+          <h3 id={`${id}-health-heading`}>
+            <label htmlFor={`${id}-health`}>{t("service.health")}</label>
+          </h3>
+          <Switch
+            id={`${id}-health`}
+            aria-label={t("service.healthEnabled")}
+            checked={!!healthProbe}
+            onCheckedChange={(enabled) =>
+              patch({
+                healthProbe: enabled
+                  ? {
+                      command: "",
+                      readyCodes: [0],
+                      notReadyCodes: [1],
+                      repeatable: false,
+                      timeoutSecs: 5,
+                      intervalSecs: 2,
+                      budgetSecs: 60,
+                    }
+                  : null,
+              })
+            }
+          />
+        </div>
+        {healthProbe && (
+          <>
+            <ParameterField
+              label={t("service.healthCommand")}
+              description={t("service.remoteProbe")}
+            >
+              <textarea
+                className="preset-textarea"
+                rows={2}
+                required
+                maxLength={65536}
+                value={healthProbe.command}
+                onChange={(e) =>
+                  patch({
+                    healthProbe: { ...healthProbe, command: e.target.value },
+                  })
+                }
+              />
+            </ParameterField>
+            <ControlDisclosure label={t("service.healthRules")}>
+              <div className="service-advanced-options">
+                {codes("readyCodes", healthProbe.readyCodes, (readyCodes) =>
+                  patch({ healthProbe: { ...healthProbe, readyCodes } }),
+                )}
+                {codes(
+                  "notReadyCodes",
+                  healthProbe.notReadyCodes,
+                  (notReadyCodes) =>
+                    patch({ healthProbe: { ...healthProbe, notReadyCodes } }),
+                )}
+              </div>
+              {number(
+                "probeTimeout",
+                healthProbe.timeoutSecs,
+                1,
+                30,
+                (timeoutSecs) =>
+                  patch({ healthProbe: { ...healthProbe, timeoutSecs } }),
+              )}
+              <ParameterSwitch
+                label={t("service.repeatable")}
+                description={t("service.repeatHint")}
+                checked={healthProbe.repeatable}
+                onCheckedChange={(repeatable) =>
+                  patch({ healthProbe: { ...healthProbe, repeatable } })
+                }
+              />
+              {number(
+                "interval",
+                healthProbe.intervalSecs,
+                1,
+                60,
+                (intervalSecs) =>
+                  patch({ healthProbe: { ...healthProbe, intervalSecs } }),
+              )}
+              {number("budget", healthProbe.budgetSecs, 1, 600, (budgetSecs) =>
+                patch({ healthProbe: { ...healthProbe, budgetSecs } }),
+              )}
+            </ControlDisclosure>
+          </>
+        )}
+      </section>
+
+      <ControlDisclosure label={t("service.settings")}>
         {select(
           t("service.startAction"),
           c.startActionId || "none",
@@ -320,153 +493,20 @@ export function ControlEditor({
               startActionId: startActionId === "none" ? null : startActionId,
             }),
         )}
-        {number("ttl", c.ttlSecs, 1, 3600, (ttlSecs) => patch({ ttlSecs }))}
-      </div>
-      {c.statusProbe && (
-        <>
-          {service.actions.find((a) => a.id === c.statusProbe?.actionId)
-            ?.confirm && (
-            <p className="inline-error">{t("service.statusConfirmHint")}</p>
-          )}
-          {select(
-            t("service.mapping"),
-            c.statusProbe.mode,
-            ["output", "exitCode", "json"].map((value) => ({
-              value,
-              label: t(`service.mappingMode.${value}`),
-            })),
-            (mode) =>
-              patch({
-                statusProbe: {
-                  ...c.statusProbe!,
-                  mode: mode as "output" | "exitCode" | "json",
-                },
-              }),
-          )}
-          {c.statusProbe.mode === "exitCode" && (
-            <div className="preset-action-options">
-              {codes(
-                "runningCodes",
-                c.statusProbe.runningCodes,
-                (runningCodes) =>
-                  patch({ statusProbe: { ...c.statusProbe!, runningCodes } }),
-              )}
-              {codes(
-                "stoppedCodes",
-                c.statusProbe.stoppedCodes,
-                (stoppedCodes) =>
-                  patch({ statusProbe: { ...c.statusProbe!, stoppedCodes } }),
-              )}
-              {codes("failedCodes", c.statusProbe.failedCodes, (failedCodes) =>
-                patch({ statusProbe: { ...c.statusProbe!, failedCodes } }),
-              )}
-            </div>
-          )}
-          {c.statusProbe.mode === "json" && (
-            <p className="muted">{t("service.jsonHint")}</p>
-          )}
-        </>
-      )}
-      <label className="field service-switch-field" htmlFor={`${id}-health`}>
-        {t("service.healthEnabled")}
-        <Switch
-          id={`${id}-health`}
-          checked={!!c.healthProbe}
-          onCheckedChange={(enabled) =>
-            patch({
-              healthProbe: enabled
-                ? {
-                    command: "",
-                    readyCodes: [0],
-                    notReadyCodes: [1],
-                    repeatable: false,
-                    timeoutSecs: 5,
-                    intervalSecs: 2,
-                    budgetSecs: 60,
-                  }
-                : null,
-            })
-          }
-        />
-      </label>
-      {c.healthProbe && (
-        <>
-          <label className="field" htmlFor={`${id}-command`}>
-            {t("service.healthCommand")}
-            <textarea
-              className="preset-textarea"
-              id={`${id}-command`}
-              required
-              maxLength={65536}
-              value={c.healthProbe.command}
-              onChange={(e) =>
-                patch({
-                  healthProbe: { ...c.healthProbe!, command: e.target.value },
-                })
-              }
-            />
-          </label>
-          <p className="muted">{t("service.remoteProbe")}</p>
-          <div className="preset-action-options">
-            {codes("readyCodes", c.healthProbe.readyCodes, (readyCodes) =>
-              patch({ healthProbe: { ...c.healthProbe!, readyCodes } }),
-            )}
-            {codes(
-              "notReadyCodes",
-              c.healthProbe.notReadyCodes,
-              (notReadyCodes) =>
-                patch({ healthProbe: { ...c.healthProbe!, notReadyCodes } }),
-            )}
-            {number(
-              "probeTimeout",
-              c.healthProbe.timeoutSecs,
-              1,
-              30,
-              (timeoutSecs) =>
-                patch({ healthProbe: { ...c.healthProbe!, timeoutSecs } }),
-            )}
-          </div>
-          <label
-            className="field service-switch-field"
-            htmlFor={`${id}-repeat`}
-          >
-            {t("service.repeatable")}
-            <Switch
-              id={`${id}-repeat`}
-              checked={c.healthProbe.repeatable}
-              onCheckedChange={(repeatable) =>
-                patch({ healthProbe: { ...c.healthProbe!, repeatable } })
-              }
-            />
-          </label>
-          <p className="muted">{t("service.repeatHint")}</p>
-          <div className="preset-action-options">
-            {number(
-              "interval",
-              c.healthProbe.intervalSecs,
-              1,
-              60,
-              (intervalSecs) =>
-                patch({ healthProbe: { ...c.healthProbe!, intervalSecs } }),
-            )}
-            {number("budget", c.healthProbe.budgetSecs, 1, 600, (budgetSecs) =>
-              patch({ healthProbe: { ...c.healthProbe!, budgetSecs } }),
-            )}
-          </div>
-        </>
-      )}
-      {c.startActionId && (
-        <p className="muted service-control-hint">{t("service.connectHint")}</p>
-      )}
-      <label className="field service-switch-field" htmlFor={`${id}-after`}>
-        {t("service.checkAfter")}
-        <Switch
-          id={`${id}-after`}
+        {c.startActionId && (
+          <p className="muted service-advanced-hint">
+            {t("service.connectHint")}
+          </p>
+        )}
+        <ParameterSwitch
+          label={t("service.checkAfter")}
+          description={t("service.probeHint")}
           checked={c.checkAfterActions}
           onCheckedChange={(checkAfterActions) => patch({ checkAfterActions })}
         />
-      </label>
-    </fieldset>
+        {number("ttl", c.ttlSecs, 1, 3600, (ttlSecs) => patch({ ttlSecs }))}
+      </ControlDisclosure>
+    </>
   );
 }
 
@@ -496,22 +536,10 @@ export function CredentialRetry({
   const service = data.services?.find(
     (s) => s.id === run.serviceId && s.revision === run.serviceRevision,
   );
-  const routeIds = [
-    run.hostId,
-    ...(run.workflowRuleId
-      ? [data.rules.find((r) => r.id === run.workflowRuleId)?.hostId]
-      : []),
-  ];
-  const hosts = [
-    ...new Map(
-      routeIds
-        .flatMap((id) => {
-          const host = data.hosts.find((h) => h.id === id);
-          return host ? [...jumpHosts(data.hosts, host), host] : [];
-        })
-        .map((host) => [host.id, host]),
-    ).values(),
-  ];
+  const profile = data.hosts.find((host) => host.id === run.hostId);
+  const loginId = serviceLoginId(service, profile, run.loginId);
+  const host = resolvedLogin(profile, loginId);
+  const hosts = host ? [...jumpHosts(data.hosts, host), host] : [];
   const canRetry =
     !!service &&
     service.executionEnabled !== false &&
@@ -578,7 +606,7 @@ export function CredentialRetry({
                 setBusy(true);
                 void bridge
                   .runServiceOperation({
-                    serviceId: service.id,
+                    serviceId: service.id, loginId,
                     revision: service.revision,
                     requestId: requestId.current,
                     operation,

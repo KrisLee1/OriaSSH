@@ -25,7 +25,7 @@ const rows = activityRows({
 describe("activity list window and progressive rendering", () => {
   it("covers rapid scroll jumps with three screens on either side and preserves total height", () => {
     const offsets = activityOffsets(activityItems(rows, "none", new Set()));
-    for (const top of [0, 100, 8400, 42000, 82000]) {
+    for (const top of [0, 100, offsets[100], offsets[500], offsets[985]]) {
       const range = activityRange(offsets, top, 600);
       expect(range.before).toBeLessThanOrEqual(Math.max(0, top - 1800));
       expect(offsets[range.end]).toBeGreaterThanOrEqual(
@@ -34,7 +34,7 @@ describe("activity list window and progressive rendering", () => {
       expect(
         range.before + offsets[range.end] - offsets[range.start] + range.after,
       ).toBe(range.total);
-      expect(range.end - range.start).toBeLessThan(55);
+      expect(range.end - range.start).toBeLessThan(65);
     }
   });
   it("keeps stable record identities when live logs arrive and respects collapsed groups", () => {
@@ -84,6 +84,6 @@ describe("activity list window and progressive rendering", () => {
     expect(mounted).toBeGreaterThan(30);
     expect(mounted).toBeLessThan(ACTIVITY_PAGE_SIZE);
     expect(html).toContain("activity-load-more");
-    expect(html).not.toContain("run-0</small>");
+    expect(html).not.toContain("run-0</span>");
   });
 });

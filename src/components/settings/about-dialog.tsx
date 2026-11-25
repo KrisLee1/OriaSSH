@@ -23,7 +23,7 @@ import type { UpdateSnapshot } from "@/types";
 import packageInfo from "../../../package.json";
 import applicationIcon from "../../../src-tauri/icons/runtime-icon-light.png";
 import applicationIconDark from "../../../src-tauri/icons/runtime-icon-dark.png";
-import applicationLogo from "@/assets/oria-tunnel-logo.svg";
+import applicationLogo from "@/assets/oria-ssh-logo.svg";
 import githubBlack from "@/assets/github-black.svg";
 import githubWhite from "@/assets/github-white.svg";
 import authorLogo from "@/assets/krislee-logo.svg";
@@ -153,7 +153,7 @@ export function AboutDialog({
         <img src={applicationIconDark} width={72} height={72} alt={t("about.icon")} className="hidden size-18 shrink-0 dark:block" />
         <div className="grid min-w-0 gap-2">
           <h3 className="m-0! text-2xl! leading-tight font-semibold tracking-tight">
-            OriaTunnel
+            OriaSSH
           </h3>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground sm:text-sm">
             <p data-selectable="true">
@@ -185,7 +185,7 @@ export function AboutDialog({
           {t("about.website")}
         </ExternalLink>
         <ExternalLink
-          href="https://github.com/KrisLee1/OriaTunnel"
+          href="https://github.com/KrisLee1/OriaSSH"
           className={buttonVariants({ variant: "outline", size: "sm" })}
         >
           <img
@@ -213,7 +213,7 @@ export function AboutDialog({
           {t("about.author")}
         </ExternalLink>
         <ExternalLink
-          href="https://github.com/KrisLee1/OriaTunnel/issues"
+          href="https://github.com/KrisLee1/OriaSSH/issues"
           className={buttonVariants({ variant: "outline", size: "sm" })}
         >
           <MessageSquareWarningIcon

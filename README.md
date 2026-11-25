@@ -1,13 +1,13 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/oriatunnel-logo-dark.svg">
-    <img src="docs/assets/oriatunnel-logo.svg" alt="OriaTunnel" width="440">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/oriassh-logo-dark.svg">
+    <img src="docs/assets/oriassh-logo.svg" alt="OriaSSH" width="440">
   </picture>
 </p>
 
 <h1 align="center">一个 SSH 工作区，简化远程管理</h1>
 
-<p align="center">OriaTunnel 将 SSH 隧道、远程服务、终端、文件传输和远程桌面集中在一个可视化工作区。</p>
+<p align="center">OriaSSH 将 SSH 隧道、远程服务、终端、文件传输和远程桌面集中在一个可视化工作区。</p>
 
 <p align="center">
   简体中文 · <a href="docs/readme/README.zh-TW.md">繁體中文</a> · <a href="docs/readme/README.en.md">English</a> · <a href="docs/readme/README.ja.md">日本語</a> · <a href="docs/readme/README.ko.md">한국어</a> · <a href="docs/readme/README.de.md">Deutsch</a> · <a href="docs/readme/README.fr.md">Français</a> · <a href="docs/readme/README.ru.md">Русский</a>
@@ -45,6 +45,8 @@
 
 ## 下载与安装
 
+OriaSSH 原名 OriaTunnel。下方 v0.5.0 安装包和安装后的应用仍显示旧名。
+
 | 平台 | v0.5.0 安装包 | 安装方式 |
 | --- | --- | --- |
 | macOS | [Apple Silicon](https://github.com/KrisLee1/OriaTunnel/releases/download/v0.5.0/OriaTunnel_0.5.0_aarch64.dmg) · [Intel](https://github.com/KrisLee1/OriaTunnel/releases/download/v0.5.0/OriaTunnel_0.5.0_x64.dmg) | 打开磁盘映像，将 OriaTunnel 拖入「应用程序」。 |
@@ -54,7 +56,7 @@
 
 **v0.5.0** 新增可拖放的终端组合面板，为 Windows SSH 主机提供 PowerShell 智能编辑，并改善大目录传输、断线续传和面板响应。已安装的用户可在「关于」中检查更新。
 
-[本版更新说明](docs/releases/v0.5.0.md) · [所有版本](https://github.com/KrisLee1/OriaTunnel/releases)
+[本版更新说明](docs/releases/v0.5.0.md) · [所有版本](https://github.com/KrisLee1/OriaSSH/releases)
 
 ## 快速上手
 
@@ -78,7 +80,7 @@
 
 ## 界面预览
 
-以下为官网演示使用的示例数据，图片随深浅主题切换。
+这些深浅主题截图取自更名前的官网演示，使用示例数据。
 
 | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/connection-map-dark.png"><img src="docs/assets/screenshots/connection-map-light.png" alt="连接图"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/terminal-dark.png"><img src="docs/assets/screenshots/terminal-light.png" alt="智能终端命令库"></picture> |
 | :---: | :---: |
@@ -95,7 +97,7 @@
 
 ## 文档与支持
 
-[使用指南](docs/USAGE.md) · [常见问题与排错](docs/USAGE.md#查看状态与排查问题) · [开发指南](docs/DEVELOPMENT.md) · [反馈问题](https://github.com/KrisLee1/OriaTunnel/issues)
+[使用指南](docs/USAGE.md) · [常见问题与排错](docs/USAGE.md#查看状态与排查问题) · [开发指南](docs/DEVELOPMENT.md) · [反馈问题](https://github.com/KrisLee1/OriaSSH/issues)
 
 ## 许可证
 

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Progress } from "@/components/ui/progress";
 import { active, transferPercent, displayPath, size, type Task } from "./api";
 import { FileTransferDetailsContext } from "./transfer-state";
+import { transferDisplayPhase } from "./transfer-list";
 import { TransferMetrics, useTransferMetrics } from "./transfer-metrics";
 
 export function TransferDetails({ taskIds }: { taskIds: string[] }) {
@@ -40,7 +41,10 @@ function TransferDetail({ task }: { task: Task }) {
           ? "checkingDirect"
           : "viaLocal"
       : task.direction;
-  const phase = task.directPending ? "directUnknown" : task.phase;
+  const phase =
+    task.directPending && !active(task)
+      ? "directUnknown"
+      : transferDisplayPhase(task);
   const running = active(task);
   const scan = task.phase === "preparing" ? task.scan : null;
   return (

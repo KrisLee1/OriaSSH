@@ -1,4 +1,10 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { createPortal } from "react-dom";
 import { motion } from "motion/react";
 import { useEntranceMotion } from "./ui/motion";
@@ -60,25 +66,40 @@ export function Modal({
   description,
   children,
   close,
+  disablePointerDismissal,
+  initialFocus,
+  animateBody = true,
   className = "max-w-lg sm:max-w-lg",
 }: {
   title: ReactNode;
-  description?: string;
+  description?: ReactNode;
   children: ReactNode;
   close: () => void;
+  disablePointerDismissal?: boolean;
+  initialFocus?: RefObject<HTMLElement | null>;
+  animateBody?: boolean;
   className?: string;
 }) {
   const entrance = useEntranceMotion(4);
   const [footerTarget, setFooterTarget] = useState<HTMLDivElement | null>(null);
   const [titleTarget, setTitleTarget] = useState<HTMLDivElement | null>(null);
+  const body = (
+    <>
+      {description && (
+        <ResponsiveModalDescription>{description}</ResponsiveModalDescription>
+      )}
+      {children}
+    </>
+  );
   return (
     <ResponsiveModal
       open
+      disablePointerDismissal={disablePointerDismissal}
       onOpenChange={(open) => {
         if (!open) close();
       }}
     >
-      <ResponsiveModalContent className={className}>
+      <ResponsiveModalContent className={className} initialFocus={initialFocus}>
         <ModalFooterTarget.Provider value={footerTarget}>
           <ModalTitleTarget.Provider value={titleTarget}>
             <ResponsiveModalHeader>
@@ -91,14 +112,13 @@ export function Modal({
               </div>
             </ResponsiveModalHeader>
             <ResponsiveModalBody>
-              <motion.div className="form-body" {...entrance}>
-                {description && (
-                  <ResponsiveModalDescription>
-                    {description}
-                  </ResponsiveModalDescription>
-                )}
-                {children}
-              </motion.div>
+              {animateBody ? (
+                <motion.div className="form-body" {...entrance}>
+                  {body}
+                </motion.div>
+              ) : (
+                <div className="form-body">{body}</div>
+              )}
             </ResponsiveModalBody>
             <div className="business-modal-footer" ref={setFooterTarget} />
           </ModalTitleTarget.Provider>

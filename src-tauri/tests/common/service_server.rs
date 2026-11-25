@@ -9,7 +9,7 @@ use russh::{
 use std::{
     collections::BTreeMap,
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicU16, AtomicUsize, Ordering},
         Arc, Mutex,
     },
     time::Duration,
@@ -49,8 +49,10 @@ pub struct Fixture {
     pub history: Arc<Mutex<Vec<String>>>,
     pub home: Arc<tempfile::TempDir>,
     pub health_port: u16,
+    pub foreground_port: Arc<AtomicU16>,
     pub shutdown: CancellationToken,
     children: Arc<Mutex<BTreeMap<ChannelId, CancellationToken>>>,
+    foreground: BTreeMap<ChannelId, Arc<TcpListener>>,
 }
 impl server::Server for Fixture {
     type Handler = Self;
@@ -60,8 +62,10 @@ impl server::Server for Fixture {
             history: self.history.clone(),
             home: self.home.clone(),
             health_port: self.health_port,
+            foreground_port: self.foreground_port.clone(),
             shutdown: self.shutdown.clone(),
             children: Default::default(),
+            foreground: Default::default(),
         }
     }
 }
@@ -117,7 +121,17 @@ impl server::Handler for Fixture {
         }
         Ok(())
     }
-    async fn signal(&mut self, ch: ChannelId, _: Sig, _: &mut Session) -> Result<(), Self::Error> {
+    async fn signal(
+        &mut self,
+        ch: ChannelId,
+        signal: Sig,
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        if matches!(signal, Sig::TERM) && self.foreground.remove(&ch).is_some() {
+            session.exit_signal_request(ch, Sig::TERM, false, "", "en")?;
+            session.eof(ch)?;
+            session.close(ch)?;
+        }
         if let Some(c) = self.children.lock().unwrap().get(&ch) {
             c.cancel();
         }
@@ -145,6 +159,18 @@ impl server::Handler for Fixture {
             return Ok(());
         }
         session.channel_success(ch)?;
+        if command == b"fixture-exit-before-close" {
+            session.exit_status_request(ch, 0)?;
+            session.data(ch, b"late fixture output\n".to_vec())?;
+            return Ok(());
+        }
+        if command == b"fixture-listen" {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            self.foreground_port
+                .store(listener.local_addr().unwrap().port(), Ordering::SeqCst);
+            self.foreground.insert(ch, Arc::new(listener));
+            return Ok(());
+        }
         if command == b"fixture-unknown" {
             session.eof(ch)?;
             session.close(ch)?;
@@ -162,6 +188,7 @@ impl server::Handler for Fixture {
         let script = match command {
             b"fixture-start" => "touch started; printf 'started\\n'".into(),
             b"fixture-stop" => "rm -f started; printf 'stopped\\n'".into(),
+            b"vncserver -list" | b"'tigervncserver' '-list'" => "cat vnc-session-list".into(),
             b"fixture-status" => {
                 "if test -f started; then printf 'running\\n'; else printf 'stopped\\n'; exit 3; fi"
                     .into()
@@ -267,8 +294,10 @@ pub async fn start() -> (u16, Fixture, tokio::task::JoinHandle<()>) {
         history: Default::default(),
         home: Arc::new(tempfile::tempdir().unwrap()),
         health_port: health.local_addr().unwrap().port(),
+        foreground_port: Default::default(),
         shutdown: CancellationToken::new(),
         children: Default::default(),
+        foreground: Default::default(),
     };
     let home = fixture.home.clone();
     let cancel = fixture.shutdown.clone();

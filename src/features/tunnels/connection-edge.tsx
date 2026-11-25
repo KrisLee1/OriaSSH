@@ -1,87 +1,43 @@
-import { BaseEdge, getBezierPath, type EdgeProps } from "@xyflow/react";
-import { memo, useLayoutEffect, useMemo, useRef } from "react";
-import { connectionSweep } from "./connection-sweep";
-
-const sweepDuration = 2800;
+import { BaseEdge, type EdgeProps } from "@xyflow/react";
+import { memo } from "react";
+import { canvasWirePath, WireLight } from "./wire-light";
 
 export const ConnectionEdge = memo(function ConnectionEdge(props: EdgeProps) {
-  const [path] = getBezierPath(props);
-  const connected = props.data?.state === "connected";
-  const glow = useRef<SVGGElement>(null);
-  const sweep = useMemo(() => connectionSweep(path), [path]);
-  const latestSweep = useRef(sweep);
-  const animations = useRef<Animation[]>([]);
-  useLayoutEffect(() => {
-    latestSweep.current = sweep;
-    for (const animation of animations.current) {
-      (animation.effect as KeyframeEffect | null)?.setKeyframes(sweep.frames);
-    }
-  }, [sweep]);
-  useLayoutEffect(() => {
-    const element = glow.current;
-    if (!element) return;
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const play = () => {
-      animations.current.forEach((animation) => animation.cancel());
-      animations.current = [];
-      if (reducedMotion.matches) return;
-      // Geometry updates and remounts keep the same sweep phase instead of restarting.
-      const timelineTime = document.timeline.currentTime;
-      const phaseTime =
-        (typeof timelineTime === "number" ? timelineTime : performance.now()) %
-        sweepDuration;
-      animations.current = Array.from(
-        element.querySelectorAll("path"),
-        (stroke) => {
-          const animation = stroke.animate(latestSweep.current.frames, {
-            duration: sweepDuration,
-            iterations: Infinity,
-            easing: "linear",
-          });
-          animation.currentTime = phaseTime;
-          return animation;
-        },
-      );
-    };
-    play();
-    reducedMotion.addEventListener("change", play);
-    return () => {
-      animations.current.forEach((animation) => animation.cancel());
-      animations.current = [];
-      reducedMotion.removeEventListener("change", play);
-    };
-  }, [connected]);
+  const transferring = props.data?.state === "transferring";
+  const listening = transferring || props.data?.state === "connected";
+  const path = canvasWirePath(props, true);
   return (
     <>
-      <BaseEdge
-        id={props.id}
+      <WireLight
+        track={
+          <BaseEdge
+            id={props.id}
+            data-forward-edge={props.id}
+            className="wire-track"
+            path={canvasWirePath(props, false)}
+            markerEnd={props.markerEnd}
+            style={{
+              ...props.style,
+              strokeWidth: "var(--endpoint-stroke-width, 1.5)",
+            }}
+            interactionWidth={0}
+          />
+        }
+        powered={listening}
+        traffic={transferring}
         path={path}
-        markerEnd={props.markerEnd}
-        style={props.style}
-        interactionWidth={20}
+        color={String(props.data?.lightColor || props.style?.stroke)}
+        sourceSide={props.sourcePosition}
+        targetSide={props.targetPosition}
       />
-      {connected && (
-        <g
-          ref={glow}
-          className="connection-glow"
-          fill="none"
-          stroke={props.style?.stroke}
-          aria-hidden="true"
-        >
-          <path
-            d={path}
-            strokeDasharray={sweep.dasharray}
-            strokeWidth={8}
-            opacity={0.14}
-          />
-          <path
-            d={path}
-            strokeDasharray={sweep.dasharray}
-            strokeWidth={3}
-            opacity={0.95}
-          />
-        </g>
-      )}
+      <path
+        className="react-flow__edge-interaction"
+        d={path}
+        fill="none"
+        stroke="transparent"
+        strokeWidth={20}
+        pointerEvents="stroke"
+      />
     </>
   );
 });

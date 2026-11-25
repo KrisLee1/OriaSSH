@@ -1,22 +1,22 @@
-# OriaTunnel 应用更新方案
+# 应用更新方案
 
-状态：应用接入与发布工作流已实现，[v0.3.0](https://github.com/KrisLee1/OriaTunnel/releases/tag/v0.3.0) 已公开并设为 Latest。四架构签名、公证和正式发布步骤以 [发布指南](RELEASING.md) 为准；以下保留各日期的历史方案与验收范围。更新日期：2026-11-16。
+状态：应用接入与发布工作流已实现，[v0.3.0](https://github.com/KrisLee1/OriaSSH/releases/tag/v0.3.0) 已公开并设为 Latest。四架构签名、公证和正式发布步骤以 [发布指南](../RELEASING.md) 为准；以下保留各日期的历史方案与验收范围。更新日期：2026-11-16。
 
-本文保存 Tauri Updater + GitHub Releases + GitHub Actions 的应用更新方案。应用接入实现见下文，方案其余内容不授权提交、推送、配置线上密钥或公开发布。实际实现与验收以 [项目状态](PROJECT_STATUS.md) 和源码为准。
+本文保存 Tauri Updater + GitHub Releases + GitHub Actions 的应用更新方案。应用接入实现见下文，方案其余内容不授权提交、推送、配置线上密钥或公开发布。实际实现与验收以 [项目状态](../PROJECT_STATUS.md) 和源码为准。
 
 ## 发布流水线实现（2026-10-25）
 
-新增 Quality gates、Build release draft 和 Publish verified release 工作流，复用独立签名预检与验签工具。四个平台独立构建，完成前端/原生检查后汇总单一清单；macOS 先公证装订最终 App/DMG，再对专用 TAR 做版本绑定签名。公开发布前重新下载并验签草稿，拒绝不完整、同版/旧版或源提交不匹配的版本。当前 Secrets 验证、运行证据及未完成项以 [项目状态](PROJECT_STATUS.md) 为准；操作入口、必需 Secrets 与产物约定统一见 [发布指南](RELEASING.md)。
+新增 Quality gates、Build release draft 和 Publish verified release 工作流，复用独立签名预检与验签工具。四个平台独立构建，完成前端/原生检查后汇总单一清单；macOS 先公证装订最终 App/DMG，再对专用 TAR 做版本绑定签名。公开发布前重新下载并验签草稿，拒绝不完整、同版/旧版或源提交不匹配的版本。当前 Secrets 验证、运行证据及未完成项以 [项目状态](../PROJECT_STATUS.md) 为准；操作入口、必需 Secrets 与产物约定统一见 [发布指南](../RELEASING.md)。
 
 ## 应用接入实现（2026-10-24）
 
 - Rust `src-tauri/src/updater.rs` 使用锁定的 `tauri-plugin-updater 2.14.0` 管理检查、下载、验签、偏好、安装和递增修订快照；前端通过业务 IPC 及 `tunnel://update` 获取状态，不直接开放插件安装权限。
 - 已配置用户提供的更新公钥和稳定版 Releases 入口；仅接受更高版本的正式版本及 HTTPS 产物地址。启用 `requireSignedVersion`，要求签名绑定清单版本；后续发布构建需使用支持该功能的锁定 CLI，手动签名时传入正确的 `--app-version`。
-- 顶栏设置按钮外侧通过透明 SVG Avatar 打开「关于 OriaTunnel」，有更新时 AvatarBadge 显示右上角纯色圆点，随窗口控件位置镜像。关于弹窗展示应用图标、名称、真实版本、`© 2026 KrisLee`、官网/GitHub/作者首页入口，以及检查、下载、进度、说明、安装确认、错误重试和启动检查偏好，使用独立 `updater` 命名空间覆盖八语言。启动检查一次，后台网络失败不弹错误；缺少公钥、开发构建或不支持的安装形态禁用更新。
+- 顶栏设置按钮外侧通过透明 SVG Avatar 打开「关于 OriaSSH」，有更新时 AvatarBadge 显示右上角纯色圆点，随窗口控件位置镜像。关于弹窗展示应用图标、名称、真实版本、`© 2026 KrisLee`、官网/GitHub/作者首页入口，以及检查、下载、进度、说明、安装确认、错误重试和启动检查偏好，使用独立 `updater` 命名空间覆盖八语言。启动检查一次，后台网络失败不弹错误；缺少公钥、开发构建或不支持的安装形态禁用更新。
 - 安装前重验签名，重新核对确认时的活动任务集合，再阻止启动并等待转发与主机测试清理；失败释放更新门禁，不重新连接已停止的会话，也不重置真正退出的永久关闭标记。
 - Windows 覆盖插件默认的同步退出前清理钩子：异步 SSH 清理由应用先等待完成，避免插件提前销毁 Tauri 资源后，安装器启动失败却无法恢复界面。macOS 安装成功后通过现有退出协调器请求重启。
 - 更新启动偏好独立原子保存到应用数据目录 `update-preferences.json`；损坏时暂停后台检查并提示，不在读取时覆盖原文件。下载包仅留在当前 Rust 进程内，退出后需重新下载。
-- 普通本地构建默认不生成签名更新包，避免要求开发者持有私钥。后续发布构建通过 `src-tauri/tauri.updater.conf.json` 覆盖启用 `createUpdaterArtifacts`；相关构建说明见 [开发指南](DEVELOPMENT.md#应用更新开发)。
+- 普通本地构建默认不生成签名更新包，避免要求开发者持有私钥。后续发布构建通过 `src-tauri/tauri.updater.conf.json` 覆盖启用 `createUpdaterArtifacts`；相关构建说明见 [开发指南](../DEVELOPMENT.md#应用更新开发)。
 
 本轮不配置 GitHub Actions、发布 Secrets 或平台签名，不读取发布私钥，不发布版本。隔离下载验签及门禁测试不等于两个正式版本间的安装验收；Windows 真机安装、macOS 两种架构的完整升级与系统权限仍需后续验证。
 
@@ -65,7 +65,7 @@ macOS 现有 ZIP 包装的是 DMG，用于保留 Finder 图标，不能直接作
 
 ## 4. 应用内交互
 
-顶栏设置按钮外侧增加 Avatar 关于入口，有更新时显示右上角纯色圆点；点击「关于 OriaTunnel」展示应用信息、版权及外链，并在「版本更新」中提供检查结果、更新说明、真实下载进度和错误，以及「检查更新」「下载更新」「安装并重启」「稍后」。新版本通知使用应用 Logo、Badge 版本号及「去更新」按钮，点击关闭通知并打开关于弹窗。复用现有组件与弹窗，同步八语言文案。
+顶栏设置按钮外侧增加 Avatar 关于入口，有更新时显示右上角纯色圆点；点击「关于 OriaSSH」展示应用信息、版权及外链，并在「版本更新」中提供检查结果、更新说明、真实下载进度和错误，以及「检查更新」「下载更新」「安装并重启」「稍后」。新版本通知使用应用 Logo、Badge 版本号及「去更新」按钮，点击关闭通知并打开关于弹窗。复用现有组件与弹窗，同步八语言文案。
 
 建议行为：
 
@@ -128,7 +128,7 @@ Windows Updater 会在安装时直接退出进程，不能只依赖现有 `ExitR
 如果使用当前仓库的公开 Releases，入口为：
 
 ```text
-https://github.com/KrisLee1/OriaTunnel/releases/latest/download/latest.json
+https://github.com/KrisLee1/OriaSSH/releases/latest/download/latest.json
 ```
 
 仓库是否适合公开提供资产需在接入时确认；若源码仓库为私有，建议使用独立公开发布仓库，客户端不内置 GitHub Token。

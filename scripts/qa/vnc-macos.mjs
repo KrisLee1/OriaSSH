@@ -15,8 +15,8 @@ const root = path.resolve("outputs/vnc-v5");
 fs.mkdirSync(root, { recursive: true });
 const run = fs.mkdtempSync(path.join(root, "native-"));
 console.log(run);
-const appName = "OriaTunnel V5 " + path.basename(run);
-const bundleId = "com.oria-tunnel.v5." + path.basename(run).toLowerCase();
+const appName = "OriaSSH V5 " + path.basename(run);
+const bundleId = "com.oria-ssh.v5." + path.basename(run).toLowerCase();
 const build = path.resolve("src-tauri/target/debug");
 const intel = process.argv.includes("--intel");
 const built = path.join(
@@ -142,7 +142,7 @@ try {
   );
   const test = fs
     .readdirSync(path.join(build, "deps"))
-    .filter((n) => /^oria_tunnel_lib-[a-f0-9]+$/.test(n))
+    .filter((n) => /^oria_ssh_lib-[a-f0-9]+$/.test(n))
     .sort(
       (a, b) =>
         fs.statSync(path.join(build, "deps", b)).mtimeMs -
@@ -278,9 +278,9 @@ try {
         ...(first
           ? [
               "--env",
-              "ORIATUNNEL_TEST_DATA_DIR=" + path.join(temporary, "data"),
+              "ORIASSH_TEST_DATA_DIR=" + path.join(temporary, "data"),
               "--env",
-              "ORIATUNNEL_TEST_SSH_CONFIG=" + sshConfig,
+              "ORIASSH_TEST_SSH_CONFIG=" + sshConfig,
               "--stderr",
               path.join(temporary, "app.log"),
             ]

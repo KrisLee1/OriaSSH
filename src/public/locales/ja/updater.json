@@ -47,9 +47,9 @@
   },
   "about": {
     "title": "このアプリについて",
-    "open": "OriaTunnel について",
-    "openWithUpdate": "OriaTunnel について、更新あり",
-    "icon": "OriaTunnel のアプリアイコン",
+    "open": "OriaSSH について",
+    "openWithUpdate": "OriaSSH について、更新あり",
+    "icon": "OriaSSH のアプリアイコン",
     "version": "バージョン {{version}}",
     "copyright": "© {{year}} KrisLee",
     "website": "公式サイト",

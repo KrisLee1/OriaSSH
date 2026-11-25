@@ -38,5 +38,5 @@ for (const selector of cssSelectors) {
  selected += '\n'+rawCss.slice(start,end)+'\n';
 }
 fs.mkdirSync('src/styles',{recursive:true});fs.writeFileSync('src/styles/globals.css',selected);
-fs.writeFileSync('docs/shell-migration.json',JSON.stringify({source:'D:/Projects/OriaAide',files:[...copied.values()],cssRanges:['1-133','1021-1063','1320-1405'],cssSelectors,adaptations:['Application storage/event namespace','Window close removes Aide avatar dependency','Bridge/types supplied by OriaTunnel','Interactive center slot added after migration']},null,2));
+fs.writeFileSync('docs/shell-migration.json',JSON.stringify({source:'D:/Projects/OriaAide',files:[...copied.values()],cssRanges:['1-133','1021-1063','1320-1405'],cssSelectors,adaptations:['Application storage/event namespace','Window close removes Aide avatar dependency','Bridge/types supplied by OriaSSH','Interactive center slot added after migration']},null,2));
 console.log(`Migrated ${copied.size} source files`);

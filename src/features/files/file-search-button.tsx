@@ -2,12 +2,8 @@ import { useRef, useState } from "react";
 import { Search } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
-import { SearchInput } from "@/components/ui/search-input";
-import {
-  Popover,
-  PopoverTrigger,
-  PopoverContent,
-} from "@/components/ui/popover";
+import { SearchPopoverContent } from "@/components/ui/search-popover";
+import { Popover, PopoverTrigger } from "@/components/ui/popover";
 
 export function FileSearchButton({
   value,
@@ -53,22 +49,19 @@ export function FileSearchButton({
           }
         />
       </span>
-      <PopoverContent
+      <SearchPopoverContent
         anchor={anchor}
         align="end"
-        className="files-search-popup overflow-hidden p-0"
         aria-label={t("search")}
         initialFocus={() => (focusOnOpen.current ? input.current : false)}
-      >
-        <SearchInput
-          embedded
-          ref={input}
-          aria-label={t("search")}
-          placeholder={t("search")}
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-        />
-      </PopoverContent>
+        inputProps={{
+          ref: input,
+          "aria-label": t("search"),
+          placeholder: t("search"),
+          value,
+          onChange: (event) => onChange(event.target.value),
+        }}
+      />
     </Popover>
   );
 }

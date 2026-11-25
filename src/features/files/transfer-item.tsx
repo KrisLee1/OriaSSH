@@ -37,6 +37,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import {
+  transferDisplayPhase,
   transferHosts,
   transferTarget,
   transferTotalSize,
@@ -57,6 +58,7 @@ export function TransferItem({
   onBatchOpenChange?: (id: string, open: boolean) => void;
 }) {
   const { t, i18n } = useTranslation("files");
+  const phase = transferDisplayPhase(task);
   const timing = useTransferMetrics(task);
   const [batchOpen, setBatchOpen] = useState(false);
   useLayoutEffect(() => {
@@ -254,10 +256,10 @@ export function TransferItem({
         </time>
         <Badge
           variant="ghost"
-          className={`files-transfer-state files-state-${task.phase}`}
+          className={`files-transfer-state files-state-${phase}`}
           title={`${t(task.phase)}${error ? ` · ${error}` : ""}`}
         >
-          {t(task.phase)}
+          {t(phase)}
         </Badge>
         <div className="files-transfer-actions">
           {running ? (

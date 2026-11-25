@@ -5,6 +5,8 @@ import type {
   RemoteService,
 } from "@/types";
 import { renderInvocation } from "./command-invocation";
+import { hasServicePort, servicePortToken } from "./command-variable-model";
+import { allowUnloadedSystemdUnit } from "./systemd-service";
 import {
   directServiceRecipes,
   directServiceTemplate,
@@ -41,6 +43,7 @@ export interface BuiltinServiceTemplate {
   icon: string;
   source: string;
   launch?: CommandInvocation;
+  port?: number;
 }
 const positional = (value: string): CommandArgument => ({ name: "", value });
 const option = (name: string, value: string | null): CommandArgument => ({
@@ -96,6 +99,7 @@ const managedServiceRecipes: BuiltinServiceTemplate[] = [
   },
   {
     id: "jupyter",
+    port: 8888,
     category: "development",
     name: "JupyterLab",
     resource: "oria-jupyter",
@@ -109,7 +113,7 @@ const managedServiceRecipes: BuiltinServiceTemplate[] = [
       positional("lab"),
       option("--no-browser", null),
       option("--ip", "127.0.0.1"),
-      option("--port", "8888"),
+      option("--port", servicePortToken),
     ),
   },
   {
@@ -131,6 +135,7 @@ const managedServiceRecipes: BuiltinServiceTemplate[] = [
   },
   {
     id: "gitea",
+    port: 3000,
     category: "development",
     name: "Gitea",
     resource: "oria-gitea",
@@ -138,10 +143,11 @@ const managedServiceRecipes: BuiltinServiceTemplate[] = [
     color: "#67ad98",
     icon: "gitea",
     source: "https://docs.gitea.com/administration/command-line",
-    launch: launch("gitea", positional("web"), option("--port", "3000")),
+    launch: launch("gitea", positional("web"), option("--port", servicePortToken)),
   },
   {
     id: "dsh",
+    port: 3080,
     category: "inference",
     name: "DeepSeek Harness",
     resource: "oria-dsh",
@@ -153,7 +159,7 @@ const managedServiceRecipes: BuiltinServiceTemplate[] = [
     launch: launch(
       "dsh",
       positional("web"),
-      option("--port", "3080"),
+      option("--port", servicePortToken),
       option("--host", "127.0.0.1"),
       option("--no-open", null),
     ),
@@ -171,6 +177,7 @@ const managedServiceRecipes: BuiltinServiceTemplate[] = [
   },
   {
     id: "llamacpp",
+    port: 8080,
     category: "inference",
     name: "llama.cpp",
     resource: "oria-llamacpp",
@@ -183,11 +190,12 @@ const managedServiceRecipes: BuiltinServiceTemplate[] = [
       "llama-server",
       option("--model", "/path/to/model.gguf"),
       option("--host", "127.0.0.1"),
-      option("--port", "8080"),
+      option("--port", servicePortToken),
     ),
   },
   {
     id: "vllm",
+    port: 8000,
     category: "inference",
     name: "vLLM",
     resource: "oria-vllm",
@@ -200,11 +208,12 @@ const managedServiceRecipes: BuiltinServiceTemplate[] = [
       positional("serve"),
       positional("Qwen/Qwen3-0.6B"),
       option("--host", "127.0.0.1"),
-      option("--port", "8000"),
+      option("--port", servicePortToken),
     ),
   },
   {
     id: "sglang",
+    port: 30000,
     category: "inference",
     name: "SGLang",
     resource: "oria-sglang",
@@ -218,11 +227,12 @@ const managedServiceRecipes: BuiltinServiceTemplate[] = [
       positional("serve"),
       positional("Qwen/Qwen3-0.6B"),
       option("--host", "127.0.0.1"),
-      option("--port", "30000"),
+      option("--port", servicePortToken),
     ),
   },
   {
     id: "xinference",
+    port: 9997,
     category: "inference",
     name: "Xinference",
     resource: "oria-xinference",
@@ -234,11 +244,12 @@ const managedServiceRecipes: BuiltinServiceTemplate[] = [
     launch: launch(
       "xinference-local",
       option("--host", "127.0.0.1"),
-      option("--port", "9997"),
+      option("--port", servicePortToken),
     ),
   },
   {
     id: "lmdeploy",
+    port: 23333,
     category: "inference",
     name: "LMDeploy",
     resource: "oria-lmdeploy",
@@ -252,11 +263,12 @@ const managedServiceRecipes: BuiltinServiceTemplate[] = [
       positional("api_server"),
       positional("internlm/internlm2_5-7b-chat"),
       option("--server-name", "127.0.0.1"),
-      option("--server-port", "23333"),
+      option("--server-port", servicePortToken),
     ),
   },
   {
     id: "tgi",
+    port: 8080,
     category: "inference",
     name: "Hugging Face TGI",
     resource: "oria-tgi",
@@ -269,11 +281,12 @@ const managedServiceRecipes: BuiltinServiceTemplate[] = [
       "text-generation-launcher",
       option("--model-id", "Qwen/Qwen2.5-0.5B-Instruct"),
       option("--hostname", "127.0.0.1"),
-      option("--port", "8080"),
+      option("--port", servicePortToken),
     ),
   },
   {
     id: "tensorrt",
+    port: 8000,
     category: "inference",
     name: "TensorRT-LLM",
     resource: "oria-tensorrt",
@@ -285,11 +298,12 @@ const managedServiceRecipes: BuiltinServiceTemplate[] = [
       "trtllm-serve",
       positional("/path/to/model"),
       option("--host", "127.0.0.1"),
-      option("--port", "8000"),
+      option("--port", servicePortToken),
     ),
   },
   {
     id: "litellm",
+    port: 4000,
     category: "inference",
     name: "LiteLLM",
     resource: "oria-litellm",
@@ -301,7 +315,7 @@ const managedServiceRecipes: BuiltinServiceTemplate[] = [
       "litellm",
       option("--model", "ollama/llama3.2"),
       option("--host", "127.0.0.1"),
-      option("--port", "4000"),
+      option("--port", servicePortToken),
     ),
   },
   {
@@ -515,39 +529,24 @@ export function applyLaunchTemplate(
     category: preset.category,
     color: preset.color,
     icon: { kind: "builtin", value: preset.icon },
+    port: preset.port,
     actions: base.actions.map((a) => ({ ...a })),
   };
+  if (preset.manager.startsWith("systemd")) result.control = { ...result.control, checkAfterActions: true };
   if (!invocation) return result;
-  const managed: CommandInvocation = {
-    executable: "systemd-run",
-    ...(invocation.environment
-      ? { environment: structuredClone(invocation.environment) }
-      : {}),
-    arguments: [
-      option("--user", null),
-      option("--unit", base.resource),
-      option("--collect", null),
-      option("--", null),
-      positional(invocation.executable),
-      // systemd expands dollar signs again after the POSIX shell. Use its
-      // documented $$ escape, compatible with older systemd (no v254 switch).
-      ...invocation.arguments.map((arg) => ({
-        ...arg,
-        value: arg.value?.replaceAll("$", () => "$$") ?? null,
-      })),
-    ],
-  };
-  const start = result.actions.find((a) => a.kind === "start")!;
-  start.invocation = managed;
-  start.command = renderInvocation(managed);
-  const status = result.actions.find((a) => a.kind === "status")!;
-  status.command = status.command.replace(
-    ' || exit 5\n[ "$load" = loaded ] || exit 5',
-    '\nload_result=$?\n[ "$load" != not-found ] || exit 3\n[ "$load_result" -eq 0 ] && [ "$load" = loaded ] || exit 5',
-  );
-  const restart = result.actions.find((a) => a.kind === "restart")!;
-  const unit = "'" + base.resource.replaceAll("'", `'"'"'`) + "'";
-  restart.command = `load=$(systemctl --user show --property=LoadState --value -- ${unit})\nload_result=$?\nif [ "$load" = not-found ]; then\n${start.command}\nelif [ "$load_result" -eq 0 ] && [ "$load" = loaded ]; then\n${restart.command}\nelse\nexit 5\nfi`;
+  const command = renderInvocation(invocation);
+  const servicePortVariable = (hasServicePort(invocation.script) ||
+    invocation.arguments.some((arg) => hasServicePort(arg.value))) || undefined;
+  for (const action of result.actions) {
+    if (action.kind === "start" || action.kind === "restart") {
+      action.invocation = structuredClone(invocation);
+      action.command = command;
+      action.servicePortVariable = servicePortVariable;
+      action.systemdLaunch = { unit: base.resource, mode: "transient" };
+    } else if (action.kind === "status") {
+      action.command = allowUnloadedSystemdUnit(action.command);
+    }
+  }
   return result;
 }
 
@@ -560,6 +559,7 @@ export function fillServiceTemplate(
   return {
     ...draft,
     name: template.name || template.resource,
+    port: draft.port ?? template.port ?? null,
     category: template.category ?? "other",
     color: template.color ?? null,
     icon: template.icon ? structuredClone(template.icon) : null,

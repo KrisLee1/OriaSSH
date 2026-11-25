@@ -35,15 +35,21 @@
 .vnc-desktop > :is(.vnc-error, textarea):first-of-type {
   margin-top: var(--aide-chrome-top);
 }
-.vnc-password {
+.vnc-password-layer {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+  inset: 0;
+  display: flex;
+  overflow: auto;
+  padding: var(--aide-chrome-top) 1rem;
+}
+.vnc-password {
   display: grid;
-  width: min(calc(100% - 2rem), 22rem);
-  gap: 1rem;
-  padding: 1.25rem;
+  flex: none;
+  width: min(100%, 22rem);
+  gap: 0.625rem;
+  margin: auto;
+  padding: 1rem;
+  box-shadow: var(--oria-shadow-sm);
 }
 .header-center > .vnc-target {
   overflow: hidden;

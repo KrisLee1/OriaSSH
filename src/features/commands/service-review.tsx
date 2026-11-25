@@ -2,7 +2,8 @@ import { formatUiError } from "@/lib/ui-message";
 import { useTranslation } from "react-i18next";
 import { Modal, ModalActions } from "@/components/tunnel-form";
 import { Button } from "@/components/ui/button";
-import type { RemoteService, ImportServicePreview } from "@/types";
+import type { ReactNode } from "react";
+import type { RemoteService, ImportServicePreview, PresetAction } from "@/types";
 import { reviewScript } from "./command-model";
 type ReviewService =
   | Pick<RemoteService, "name" | "actions" | "control" | "noLocalEnvironment">
@@ -11,9 +12,11 @@ type ReviewService =
 export function ServiceReview({
   service,
   endpoint,
+  renderAction,
 }: {
   service: ReviewService;
   endpoint: string;
+  renderAction?: (action: PresetAction) => ReactNode;
 }) {
   const { t } = useTranslation("commands");
   const control = service.control;
@@ -63,7 +66,7 @@ export function ServiceReview({
               <dl className="service-review-meta">
                 {row(
                   t("review.timeout"),
-                  action.mode === "terminal" && action.timeoutSecs === 0
+                  action.timeoutSecs === 0
                     ? t("review.unlimited")
                     : seconds(action.timeoutSecs),
                 )}
@@ -73,9 +76,13 @@ export function ServiceReview({
                   t(action.confirm ? "sharing.yes" : "sharing.no"),
                 )}
               </dl>
+              {action.systemdLaunch && (
+                <p className="muted">{t("managedBySystemd", { unit: action.systemdLaunch.unit })}</p>
+              )}
               <pre className="preset-script" data-selectable="true">
                 {reviewScript(action.command)}
               </pre>
+              {renderAction?.(action)}
             </div>
           </details>
         ))}

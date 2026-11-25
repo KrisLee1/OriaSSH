@@ -7,7 +7,7 @@ import {
   Gauge,
   Keyboard,
   MousePointer2Off,
-  TerminalIcon,
+  SquareTerminalIcon,
   Wallpaper,
   ZoomIn,
   ZoomOut,
@@ -50,6 +50,7 @@ export type Phase =
 
 export function VncHeader({
   endpoint,
+  sshUser,
   phase,
   scale,
   hideLocalCursor,
@@ -60,6 +61,7 @@ export function VncHeader({
   onSpecialKeys,
 }: {
   endpoint: string;
+  sshUser: string | null;
   phase: Phase;
   scale: string;
   hideLocalCursor: boolean;
@@ -73,6 +75,7 @@ export function VncHeader({
   const files = useFileWorkspace();
   const hostsReady = useContext(VncHostsReady);
   const terminal = useTerminalWorkspace();
+  const targetTitle = sshUser && endpoint ? `${sshUser}@${endpoint}` : endpoint || "VNC";
   const connected = phase === "connected";
   const [visible, setVisible] = useState(true);
   useEffect(() => {
@@ -129,8 +132,8 @@ export function VncHeader({
           : "vnc-floating-header"
       }
       centerContent={
-        <span className="vnc-target overlay" title={endpoint}>
-          {endpoint || "VNC"}
+        <span className="vnc-target overlay" title={targetTitle}>
+          {targetTitle}
         </span>
       }
       fixedRightActions={
@@ -222,7 +225,7 @@ export function VncHeader({
             className="md:hidden"
             onClick={() => terminal?.openHost()}
           >
-            <TerminalIcon />
+            <SquareTerminalIcon />
             {t("workspace", { ns: "terminal" })}
           </DropdownMenuItem>
           <DropdownMenuSeparator className="md:hidden" />

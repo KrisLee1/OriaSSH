@@ -61,6 +61,7 @@ export function HostDiscovery({
       title={t("newHost")}
       description={t("discoverHostsHint")}
       close={close}
+      disablePointerDismissal
     >
       {!!discoveredHosts(hosts, "").length && (
         <SearchInput

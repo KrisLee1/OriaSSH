@@ -486,7 +486,7 @@ mod tests {
             0
         );
         for (name, value) in [
-            ("com.oriatunnel.qa", "isolated metadata"),
+            ("com.oriassh.qa", "isolated metadata"),
             ("com.apple.ResourceFork", "isolated resource fork"),
         ] {
             assert!(std::process::Command::new("/usr/bin/xattr")
@@ -532,7 +532,7 @@ mod tests {
         assert_ne!(meta.st_flags() & libc::UF_HIDDEN, 0);
         assert_eq!(acl(), before_acl);
         for (name, value) in [
-            ("com.oriatunnel.qa", "isolated metadata"),
+            ("com.oriassh.qa", "isolated metadata"),
             ("com.apple.ResourceFork", "isolated resource fork"),
         ] {
             let output = std::process::Command::new("/usr/bin/xattr")

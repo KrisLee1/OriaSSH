@@ -31,11 +31,11 @@ const fileSecret = fs
   .readFileSync("src-tauri/src/files/tests.rs", "utf8")
   .match(/if p == "([^"]+)"/)[1];
 // Set this only on a disposable test desktop whose clipboard contains the marker.
-const marker = process.env.ORIATUNNEL_QA_CLIPBOARD_MARKER;
+const marker = process.env.ORIASSH_QA_CLIPBOARD_MARKER;
 const env = {
   ...process.env,
-  ORIATUNNEL_TEST_DATA_DIR: path.join(profile, "data"),
-  ORIATUNNEL_TEST_SSH_CONFIG: sshConfig,
+  ORIASSH_TEST_DATA_DIR: path.join(profile, "data"),
+  ORIASSH_TEST_SSH_CONFIG: sshConfig,
   WEBVIEW2_USER_DATA_FOLDER: path.join(profile, "webview"),
   WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:
     "--remote-debugging-port=" +
@@ -252,7 +252,7 @@ try {
   const build = path.resolve("src-tauri/target/debug");
   const bins = fs
     .readdirSync(path.join(build, "deps"))
-    .filter((f) => /^oria_tunnel_lib-[a-f0-9]+\.exe$/.test(f))
+    .filter((f) => /^oria_ssh_lib-[a-f0-9]+\.exe$/.test(f))
     .sort(
       (a, b) =>
         fs.statSync(path.join(build, "deps", b)).mtimeMs -
@@ -275,7 +275,7 @@ try {
   );
   children.push(
     spawn(
-      process.argv[2] ?? path.join(build, "oria-tunnel.exe"),
+      process.argv[2] ?? path.join(build, "oria-ssh.exe"),
       ["vnc://127.0.0.1:" + direct.port],
       { env, stdio: ["pipe", "ignore", "ignore"], windowsHide: true },
     ),
@@ -322,7 +322,7 @@ try {
   const directService = savedDirect.services.find(s => s.name === directServiceName);
   await clickText(main, "[role=dialog] button", "开始使用");
   await until(() => main.evaluate("!document.querySelector('[role=dialog]')"), "initial preferences closed");
-  const hostTrigger = q('.host-card-services button[title="TigerVNC"]');
+  const hostTrigger = q('.canvas-service-name[title="TigerVNC"]');
   await until(() => main.evaluate("!!" + hostTrigger), "host-only service rendered");
   await main.evaluate("document.querySelector('.canvas-controls .lucide-maximize')?.closest('button').click()");
   await hit(main, hostTrigger, "host-only service trigger");
@@ -346,7 +346,7 @@ try {
       timeoutSecs: 5, successCodes: [0], confirm: false,
     })),
   }});
-  await hit(main, q('.host-card-services button[title="Gitea"]'), "Gitea menu");
+  await hit(main, q('.canvas-service-name[title="Gitea"]'), "Gitea menu");
   await until(() => main.evaluate("[...document.querySelectorAll('[role=menuitem]')].some(e=>e.textContent==='打开 Gitea')"), "service-name label");
   assert.ok(await main.evaluate("[...document.querySelectorAll('[role=menuitem]')].every(e=>e.querySelector('svg'))"));
   await captureChoice(q('[role=menu]'), "gitea-menu");

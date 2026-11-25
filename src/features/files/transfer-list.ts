@@ -151,6 +151,20 @@ function within(path: string | null | undefined, root: string) {
     path === root || path.startsWith(`${base}/`) || path.startsWith(`${base}\\`)
   );
 }
+// A child rename is a step inside the folder/batch transfer. Recovery and
+// actions still consume the exact native task.phase and commit targets.
+export function transferDisplayPhase(task: Task) {
+  if (task.phase !== "committing") return task.phase;
+  const root = task.sources[0];
+  const child = task.commitSource || task.currentSource;
+  const collection =
+    task.sources.length > 1 ||
+    task.count > 1 ||
+    task.sourceKinds?.includes("directory") ||
+    (root && child !== root && within(child, root));
+  return collection ? "transferring" : "committing";
+}
+
 function lowerBound(paths: string[], value: string) {
   let low = 0,
     high = paths.length;
@@ -187,7 +201,9 @@ export function transferBatchItems(task: Task) {
     const hasSkips = isDirectory && descendantCount(skippedPaths, path) > 0;
     const currentPath = task.currentSource || task.commitSource;
     const current =
-      within(currentPath, path) && !completed.has(currentPath || "");
+      within(currentPath, path) &&
+      ((isDirectory && task.phase === "transferring") ||
+        !completed.has(currentPath || ""));
     const conflict = within(task.conflictSource, path);
     const phase = skipped.has(path)
       ? "skipped"
@@ -198,7 +214,9 @@ export function transferBatchItems(task: Task) {
           : isDirectory && task.phase === "partial" && hasSkips
             ? "partial"
             : current && !["conflict", "partial"].includes(task.phase)
-              ? task.phase
+              ? isDirectory
+                ? transferDisplayPhase(task)
+                : task.phase
               : ["failed", "interrupted", "partial"].includes(task.phase)
                 ? "unconfirmed"
                 : task.phase === "cancelled"

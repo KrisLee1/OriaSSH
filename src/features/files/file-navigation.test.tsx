@@ -22,7 +22,7 @@ describe("compact file navigation", () => {
   it("collapses intermediate directories while keeping this computer and the final hierarchy", () => {
     const html = renderToStaticMarkup(
       <FilePathNavigation
-        path="D:\\Projects\\OriaTunnel\\src\\features\\files"
+        path="D:\\Projects\\OriaSSH\\src\\features\\files"
         remote={false}
         disabled={false}
         loading={false}

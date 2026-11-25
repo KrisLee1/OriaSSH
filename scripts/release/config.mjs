@@ -13,12 +13,12 @@ export function releaseVersion(tag) {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json')));
   const tauri = JSON.parse(fs.readFileSync(path.join(root, 'src-tauri/tauri.conf.json')));
   const cargo = fs.readFileSync(path.join(root, 'src-tauri/Cargo.toml'), 'utf8').match(/^version\s*=\s*"([^"]+)"/m)?.[1];
-  const lockedCargo = fs.readFileSync(path.join(root, 'src-tauri/Cargo.lock'), 'utf8').match(/name = "oria-tunnel"\r?\nversion = "([^"]+)"/)?.[1];
+  const lockedCargo = fs.readFileSync(path.join(root, 'src-tauri/Cargo.lock'), 'utf8').match(/name = "oria-ssh"\r?\nversion = "([^"]+)"/)?.[1];
   const version = pkg.version;
   if (!/^\d+\.\d+\.\d+$/.test(version) || [tauri.version, cargo, lockedCargo].some(value => value !== version)) throw new Error('Stable version must agree in package.json, Cargo.toml, Cargo.lock and tauri.conf.json.');
   if (tag && tag !== `v${version}`) throw new Error(`Tag must be v${version}.`);
   if (!tauri.plugins?.updater?.requireSignedVersion) throw new Error('Version-bound updater signatures are required.');
-  if (!tauri.plugins.updater.endpoints.includes('https://github.com/KrisLee1/OriaTunnel/releases/latest/download/latest.json')) throw new Error('Unexpected stable updater endpoint.');
+  if (!tauri.plugins.updater.endpoints.includes('https://github.com/KrisLee1/OriaSSH/releases/latest/download/latest.json')) throw new Error('Unexpected stable updater endpoint.');
   return version;
 }
 export function matrix() { return Object.entries(platforms).map(([platform, value]) => ({ platform, ...value })); }

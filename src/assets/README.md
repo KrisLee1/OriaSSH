@@ -2,7 +2,7 @@
 
 - `microsoftedge.svg`、`googlechrome.svg`：代理浏览器菜单的彩色标识，原样取自 [browser-logos 固定修订 58881b84](https://github.com/alrra/browser-logos/tree/58881b84c4d73adc03c06fa2c275a7abee02d935) 的 `src/edge/edge.svg`、`src/chrome/chrome.svg`。本地打包，16px 显示，不在运行时联网，不随主题改色。Logo 与商标属于各自权利人，仅用于识别所选浏览器；仓库其余内容的 MIT 许可原文见 `docs/licenses/BROWSER_LOGOS_MIT.txt`，随应用携带。Firefox 的独立来源与许可见下文。
 
-- `oria-tunnel-logo.svg`：项目透明标识，复制自 `src-tauri/icons/OriaTunnelIcon.icon/Assets/oria-network-transparent 2.svg`，用于顶栏 Avatar 和官网入口。
+- `oria-ssh-logo.svg`：项目透明标识，复制自 `src-tauri/icons/OriaSSHIcon.icon/Assets/oria-network-transparent 2.svg`，用于顶栏 Avatar 和官网入口。
 - `krislee-logo.svg`：用户提供的 KrisLee SVG 原文件，用于作者首页入口，保留原始颜色、比例与透明背景。
 - `oria-theme-logo.svg`：用户提供的 `color-swatch-fan.svg` 原文件，用于更多应用中的 OriaTheme。
 - `oria-tab-logo.svg`：用户提供的 OriaTab 项目 `public/icon.svg` 原文件，用于更多应用中的 OriaTab。
@@ -15,5 +15,7 @@
 服务图标保存在 `service-icons.json`，从 [Simple Icons 16.0.0](https://github.com/simple-icons/simple-icons/tree/16.0.0/icons) 选取 26 个品牌标识，固定版本、不在运行时联网。只提取原 SVG 的 path 与 24×24 viewBox，通过 currentColor 跟随用户选择的服务颜色；图形路径保持原样。每项记录上游 SVG、品牌来源及已声明的许可；Simple Icons 的 CC0-1.0 正文和 Apache Tomcat/Kafka 的 Apache-2.0 正文位于 `docs/licenses/`，随桌面安装包带入 licenses 目录。品牌标识仅用于识别用户选择的服务。
 
 DSH 另采用官方仓库固定修订 `22ddee3792402c3e70ec5f86a63c3e3e895a2f60` 的 [FishLogo.tsx](https://github.com/deepseek-ai/deepseek-harness/blob/22ddee3792402c3e70ec5f86a63c3e3e895a2f60/packages/client/ui-primitives/src/FishLogo.tsx) 鲸鱼标识，保留原 path、23.16×17.04 viewBox 与 currentColor 用法，替换通用机器人默认图标。官方 MIT 许可原文见 `docs/licenses/DSH_MIT.txt`，随安装包携带；该标识仅用来识别服务模板，不表示官方背书。服务图标因此合计 27 个，原 26 个 Simple Icons 来源不变。
+
+`platform-icons.json` 保存操作系统与树莓派的本地图形，原始 path 与 viewBox 随应用打包，显示颜色随所选连接色。Windows 来自 [Devicon v2.17.0](https://github.com/devicons/devicon/blob/v2.17.0/icons/windows11/windows11-original.svg)，MIT 原文见 `docs/licenses/DEVICON_MIT.txt`。其余六项来自 [Simple Icons 16.0.0](https://github.com/simple-icons/simple-icons/tree/16.0.0/icons)，使用现有随包分发的 CC0-1.0 文件。各标识用于识别用户所选系统或设备。
 
 代理浏览器的 Firefox 图标 `firefoxbrowser.svg` 使用 Mozilla 官方 [protocol-assets/logos/firefox/browser/logo.svg](https://github.com/mozilla/protocol-assets/blob/916694f6f6d822289f0f66c3dd4684aee218497e/logos/firefox/browser/logo.svg)，固定修订 `916694f6f6d822289f0f66c3dd4684aee218497e`，保留原始 512×512 SVG、颜色和路径，未使用或转换用户截图。此文件的 MPL-2.0 原文见 `docs/licenses/FIREFOX_MPL_2_0.txt`，随应用分发；Firefox 标识与商标属于 Mozilla，仅用于识别浏览器。此前的 Firefox browser-logos 文件已替换；Chrome/Edge 仍按既有来源与许可使用。

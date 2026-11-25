@@ -100,7 +100,7 @@ export function terminalNeedsCredentials(
     (session.phase === "credentialsRequired" || session.error === "authentication") &&
     !session.submitted &&
     session.routeHostIds.some((id) =>
-      hosts.some((host) => host.id === id && host.authMethod !== "agent"),
+      hosts.some((host) => host.id === id && (id === session.hostId ? host.logins?.find(l => l.id === session.loginId)?.authMethod ?? host.authMethod : host.authMethod) !== "agent"),
     )
   );
 }
@@ -162,11 +162,12 @@ export function unsubmittedPreset(
     (action) => action.id === session.actionId && action.mode === "terminal",
   );
   return service &&
+    (!session.serviceRevision || session.serviceRevision === service.revision) &&
     service.executionEnabled !== false &&
     action &&
     (session.ruleId
       ? service.ruleIds.includes(session.ruleId)
       : service.hostIds?.includes(session.hostId))
-    ? { service, action, ruleId: session.ruleId ?? `host:${session.hostId}` }
+    ? { service, action, ...(session.loginId ? {loginId:session.loginId} : {}), ruleId: session.ruleId ?? `host:${session.hostId}` }
     : undefined;
 }

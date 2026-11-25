@@ -9,6 +9,7 @@ export function PaneIdentity({
   session,
   busy,
   retryProfile,
+  reachableAt,
   reconnect,
   grip,
   closeButton,
@@ -16,11 +17,12 @@ export function PaneIdentity({
   session: TerminalSession;
   busy: boolean;
   retryProfile: boolean;
+  reachableAt?: number;
   reconnect: () => void;
   grip: ReactNode;
   closeButton: ReactNode;
 }) {
-  const { t } = useTranslation("terminal");
+  const { t, i18n } = useTranslation("terminal");
   const retry = retryProfile
     ? t("retryAuth", { ns: "commands" })
     : t("reconnect");
@@ -39,17 +41,31 @@ export function PaneIdentity({
         />
       )}
       <code title={identity}>{identity}</code>
-      <span className="sr-only" role="status">
-        {t(`phase.${session.phase}`)}
+      <span
+        className={session.serviceId ? "terminal-session-notice" : "sr-only"}
+        role="status"
+      >
+        {session.serviceId && session.phase === "running"
+          ? t("phase.foreground-running", { ns: "commands" })
+          : t(`phase.${session.phase}`)}
       </span>
-      {(session.exitCode !== null || session.exitSignal) && (
-        <span className="terminal-session-notice">
-          {session.exitCode !== null
-            ? `${t("exitCode")}: ${session.exitCode}`
-            : ""}
-          {session.exitSignal ? ` · ${session.exitSignal}` : ""}
+      {reachableAt !== undefined && (
+        <span
+          className="terminal-session-notice"
+          title={`${t("service.checkedAt", { ns: "commands" })} ${new Date(reachableAt).toLocaleString(i18n.resolvedLanguage)}`}
+        >
+          {t("target-reachable", { ns: "tunnel" })}
         </span>
       )}
+      {session.phase !== "timedOut" &&
+        (session.exitCode !== null || session.exitSignal) && (
+          <span className="terminal-session-notice">
+            {session.exitCode !== null
+              ? `${t("exitCode")}: ${session.exitCode}`
+              : ""}
+            {session.exitSignal ? ` · ${session.exitSignal}` : ""}
+          </span>
+        )}
       {session.error && (
         <span
           className="terminal-session-notice text-destructive"

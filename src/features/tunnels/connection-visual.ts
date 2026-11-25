@@ -2,11 +2,13 @@ import type { Rule, Runtime } from "@/types";
 
 export function connectionVisual(
   rule: Rule,
-  runtime?: Pick<Runtime, "status">,
+  runtime?: Pick<Runtime, "status" | "sentPerSecond" | "receivedPerSecond">,
 ) {
   const state =
     runtime?.status === "listening"
-      ? "connected"
+      ? (runtime.sentPerSecond ?? 0) > 0 || (runtime.receivedPerSecond ?? 0) > 0
+        ? "transferring"
+        : "connected"
       : [
             "connecting",
             "authenticating",
@@ -23,9 +25,9 @@ export function connectionVisual(
 }
 
 // R exposes its listener on the SSH host; D has no fixed remote target port.
-export function connectionPorts(rule: Rule, sshPort?: number) {
+export function connectionPorts(rule: Rule, sshPort?: number, auto = "Auto") {
   return {
-    local: String(rule.kind === "R" ? rule.targetPort : rule.bindPort),
+    local: String(rule.kind === "R" ? rule.targetPort : rule.bindPort || auto),
     host:
       rule.kind === "D"
         ? `SSH ${sshPort || 22}`

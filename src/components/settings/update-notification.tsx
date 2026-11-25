@@ -2,7 +2,7 @@ import { Trans } from "react-i18next";
 import type { TFunction } from "i18next";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "@/components/ui/toast";
-import logo from "@/assets/oria-tunnel-logo.svg";
+import logo from "@/assets/oria-ssh-logo.svg";
 
 export function notifyApplicationUpdate(
   version: string,

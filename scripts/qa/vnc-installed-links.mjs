@@ -34,8 +34,8 @@ if (name === "external") {
   fs.writeFileSync(ssh, "");
   const env = {
     ...process.env,
-    ORIATUNNEL_TEST_DATA_DIR: path.join(argument, "data"),
-    ORIATUNNEL_TEST_SSH_CONFIG: ssh,
+    ORIASSH_TEST_DATA_DIR: path.join(argument, "data"),
+    ORIASSH_TEST_SSH_CONFIG: ssh,
     WEBVIEW2_USER_DATA_FOLDER: path.join(argument, "webview"),
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:
       "--remote-debugging-address=127.0.0.1 --remote-debugging-port=" + debug,

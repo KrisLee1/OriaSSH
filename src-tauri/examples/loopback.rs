@@ -68,7 +68,7 @@ async fn main() {
             tokio::spawn(async move {
                 let mut data = [0; 8192];
                 let _ = tcp.read(&mut data).await;
-                let body = "OriaTunnel SSH forwarding verified";
+                let body = "OriaSSH SSH forwarding verified";
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                     body.len(),

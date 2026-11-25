@@ -93,7 +93,7 @@
     "showDescription": "Afficher la description"
   },
   "initialPreferences": {
-    "title": "Bienvenue dans OriaTunnel",
+    "title": "Bienvenue dans OriaSSH",
     "description": "Choisissez vos préférences. Vous pourrez les modifier dans les réglages.",
     "done": "Commencer",
     "saveFailed": "Impossible d’enregistrer la fin de la configuration. Cette fenêtre réapparaîtra au prochain démarrage."

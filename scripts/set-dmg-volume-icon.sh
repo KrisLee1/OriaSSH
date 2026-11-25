@@ -28,12 +28,12 @@ if [[ ! -f "$icon_path" || "${icon_path##*.}" != "icns" ]]; then
   exit 1
 fi
 app_path="${3:-}"
-if [[ -n "$app_path" && ( "$app_path" != "$bundle_root/macos/OriaTunnel.app" || ! -d "$app_path" ) ]]; then
-  echo "The stapled app must be the OriaTunnel.app from the same release bundle directory." >&2
+if [[ -n "$app_path" && ( "$app_path" != "$bundle_root/macos/OriaSSH.app" || ! -d "$app_path" ) ]]; then
+  echo "The stapled app must be the OriaSSH.app from the same release bundle directory." >&2
   exit 1
 fi
 
-work_dir=$(mktemp -d "${TMPDIR:-/tmp}/oria-tunnel-dmg-icon.XXXXXX")
+work_dir=$(mktemp -d "${TMPDIR:-/tmp}/oria-ssh-dmg-icon.XXXXXX")
 mount_dir="$work_dir/mount"
 rw_dmg="$work_dir/read-write.dmg"
 final_dmg="$work_dir/final.dmg"
@@ -59,12 +59,12 @@ fi
 
 cp "$icon_path" "$mount_dir/.VolumeIcon.icns"
 if [[ -n "$app_path" ]]; then
-  if [[ ! -d "$mount_dir/OriaTunnel.app" || -L "$mount_dir/OriaTunnel.app" ]]; then
+  if [[ ! -d "$mount_dir/OriaSSH.app" || -L "$mount_dir/OriaSSH.app" ]]; then
     echo "Cannot replace the app: the mounted image does not contain the expected app bundle." >&2
     exit 1
   fi
-  rm -rf "$mount_dir/OriaTunnel.app"
-  ditto "$app_path" "$mount_dir/OriaTunnel.app"
+  rm -rf "$mount_dir/OriaSSH.app"
+  ditto "$app_path" "$mount_dir/OriaSSH.app"
 fi
 SetFile -c icnC "$mount_dir/.VolumeIcon.icns"
 SetFile -a C "$mount_dir"

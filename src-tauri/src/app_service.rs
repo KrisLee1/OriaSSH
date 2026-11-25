@@ -8,6 +8,7 @@ use std::time::Duration;
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Start {
+    pub login_id: Option<String>,
     pub service_id: String,
     pub revision: String,
     pub request_id: String,
@@ -42,48 +43,69 @@ pub fn service_observations(
     command_api::local(&window)?;
     Ok(observations(&state))
 }
-fn route(snapshot: &Snapshot, id: &str) -> Result<Vec<Host>, String> {
-    let host = snapshot
-        .hosts
-        .iter()
-        .find(|h| h.id == id)
-        .ok_or("hostMissing")?;
-    let mut route = resolve_jumps(&snapshot.hosts, host)?;
-    route.push(host.clone());
+fn route(snapshot: &Snapshot, host: Host) -> Result<Vec<Host>, String> {
+    let mut route = resolve_jumps(&snapshot.hosts, &host)?;
+    route.push(host);
     Ok(route)
 }
 fn observations(state: &AppState) -> Vec<Observation> {
     let s = state.snapshot();
-    s.services
-        .iter()
-        .flat_map(|service| {
-            let rules: Vec<_> = s
-                .rules
-                .iter()
-                .filter(|r| service.rule_ids.contains(&r.id))
-                .collect();
-            let mut targets: Vec<_> = rules
-                .iter()
-                .map(|r| (Some(r.id.clone()), r.host_id.as_str()))
-                .collect();
-            targets.extend(service.host_ids.iter().map(|host| (None, host.as_str())));
-            if targets.is_empty() {
-                targets.push((None, ""));
-            }
+    let mut facts = Vec::new();
+    for service in &s.services {
+        let mut targets: BTreeMap<&str, Vec<Option<&str>>> = BTreeMap::new();
+        for rule in s.rules.iter().filter(|r| service.rule_ids.contains(&r.id)) {
             targets
-                .into_iter()
-                .map(|(rule_id, host)| {
-                    let identity = route(&s, host)
-                        .map(|r| control::identity(&r))
-                        .unwrap_or_default();
-                    let mut o = state.observations.view(service, &identity, timestamp());
-                    o.rule_id = rule_id;
-                    o.host_id = Some(host.into());
-                    o
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect()
+                .entry(&rule.host_id)
+                .or_default()
+                .push(Some(&rule.id));
+        }
+        for host in &service.host_ids {
+            targets.entry(host).or_default().push(None);
+        }
+        if targets.is_empty() {
+            targets.insert("", vec![None]);
+        }
+        for (host_id, rules) in targets {
+            let host = s.hosts.iter().find(|h| h.id == host_id);
+            let primary = crate::model::primary_login_id(host_id);
+            let alternatives = host.into_iter().flat_map(|h| {
+                (!h.credential_only)
+                    .then_some(primary.as_str())
+                    .into_iter()
+                    .chain(h.logins.iter().map(|l| l.id.as_str()))
+            });
+            let mut seen = std::collections::HashSet::new();
+            for (index, login) in std::iter::once(None)
+                .chain(alternatives.map(Some))
+                .enumerate()
+            {
+                let path = host
+                    .and_then(|host| service.execution_login(host, login).ok())
+                    .and_then(|host| route(&s, host).ok());
+                let login_id = path.as_ref().and_then(|p| p.last()).map(Host::login_id);
+                if !seen.insert(login_id.clone()) {
+                    continue;
+                }
+                let identity = path
+                    .as_ref()
+                    .map(|p| control::identity(p))
+                    .unwrap_or_default();
+                let mut fact = state.observations.view(service, &identity, timestamp());
+                // Keep the saved target's unknown state even before its first check.
+                // Other logins have independent user managers and appear once observed.
+                if index > 0 && fact.revision == 0 {
+                    continue;
+                }
+                fact.host_id = Some(host_id.into());
+                fact.login_id = login_id;
+                for rule in &rules {
+                    fact.rule_id = rule.map(str::to_owned);
+                    facts.push(fact.clone());
+                }
+            }
+        }
+    }
+    facts
 }
 fn publish(state: &AppState, app: &tauri::AppHandle) {
     let _ = app.emit("command://runs", state.commands.list());
@@ -104,7 +126,7 @@ pub(super) async fn start(
         return Err("invalidAction".into());
     }
     let snapshot = state.snapshot();
-    let service = snapshot
+    let mut service = snapshot
         .services
         .iter()
         .find(|s| s.id == request.service_id)
@@ -115,12 +137,15 @@ pub(super) async fn start(
     if service.revision != request.revision {
         return Err("staleAction".into());
     }
+    service.prepare_managed_actions();
+    for action in &mut service.actions {
+        *action = action.for_execution(service.port)?;
+    }
     let (target_rule, target_host) = service.execution_target(
         &snapshot,
         request.rule_id.as_deref(),
         request.host_id.as_deref(),
     )?;
-    let target_host = target_host.id.clone();
     let target_rule = target_rule.cloned();
     let operation_key = match request.operation {
         Operation::Action => request.action_id.clone().ok_or("actionMissing")?,
@@ -131,6 +156,8 @@ pub(super) async fn start(
             request.rule_id.as_deref().ok_or("ruleMissing")?
         ),
     };
+    let execution_host = service.execution_login(target_host, request.login_id.as_deref())?;
+    let mut frozen = route(&snapshot, execution_host)?;
     if let Some(run) = state.commands.existing(
         &request.request_id,
         &service.id,
@@ -138,7 +165,8 @@ pub(super) async fn start(
         &service.revision,
     )? {
         if run.workflow_rule_id.as_deref() != target_rule.as_ref().map(|r| r.id.as_str())
-            || run.host_id != target_host
+            || run.host_id != target_host.id
+            || run.login_id != frozen.last().map(Host::login_id)
         {
             return Err("staleAction".into());
         }
@@ -148,7 +176,7 @@ pub(super) async fn start(
         return Err("serviceBusy".into());
     }
     let action = if request.operation == Operation::Action {
-        let a = service
+        let mut a = service
             .actions
             .iter()
             .find(|a| Some(&a.id) == request.action_id.as_ref())
@@ -160,6 +188,7 @@ pub(super) async fn start(
         if a.confirm && !request.confirmed {
             return Err("confirmationRequired".into());
         }
+        a.use_foreground_timeout();
         Some(a)
     } else {
         None
@@ -176,7 +205,7 @@ pub(super) async fn start(
     if request.operation == Operation::CheckHealth && service.control.health_probe.is_none() {
         return Err("healthProbeMissing".into());
     }
-    let mut frozen = route(&snapshot, &target_host)?;
+    let command_route = frozen.clone();
     let identity = control::identity(&frozen);
     let host = frozen.last().unwrap().clone();
     if frozen.iter().any(|h| !h.diagnostics.is_empty()) {
@@ -210,17 +239,21 @@ pub(super) async fn start(
         if service.control.start_action_id.is_none() {
             return Err("startActionMissing".into());
         }
-        let target_route = route(&snapshot, &r.host_id)?;
+        let target_route = route(
+            &snapshot,
+            target_host.login(r.login_identity_id.as_deref())?,
+        )?;
         if target_route.iter().any(|h| !h.diagnostics.is_empty()) {
             return Err("hostBlocked".into());
         }
-        frozen.extend(target_route);
-        Some(r)
+        frozen.extend(target_route.iter().cloned());
+        Some((r, target_route))
     } else {
         None
     };
     let id = format!("command:{}", uuid::Uuid::new_v4());
     let run = Run {
+        login_id: Some(host.login_id()),
         id: id.clone(),
         request_id: request.request_id,
         service_id: service.id.clone(),
@@ -267,7 +300,7 @@ pub(super) async fn start(
     let (hops, observer) = sessions::credentials(
         state.clone(),
         app.clone(),
-        &route(&snapshot, &host.id)?,
+        &command_route,
         &request.secrets,
         &request.remember_host_ids,
         active.clone(),
@@ -321,7 +354,7 @@ pub(super) async fn start(
                 now.hosts.iter().any(|after| {
                     after.id == before.id
                         && after.diagnostics.is_empty()
-                        && after.same_connection(before)
+                        && after.matches_login(before)
                 })
             })
             && rule.as_ref().is_none_or(|r| {
@@ -330,16 +363,30 @@ pub(super) async fn start(
                     .any(|saved| saved.id == r.id && saved.same_connection(r))
             })
     });
-    let forward = forward_rule.map(|rule| {
+    let forward = forward_rule.map(|(rule, expected_route)| {
+        let command_login = host
+            .active_login_id
+            .clone()
+            .unwrap_or_else(|| crate::model::primary_login_id(&host.id));
+        let same_login = rule
+            .login_identity_id
+            .clone()
+            .unwrap_or_else(|| crate::model::primary_login_id(&rule.host_id))
+            == command_login;
         let context = ForwardContext {
-            expected_route: route(&snapshot, &rule.host_id).unwrap(),
+            expected_route,
             rule,
             values: request
                 .secrets
                 .into_iter()
+                .filter(|(id, _)| same_login || id != &host.id)
                 .map(|(id, s)| (id, s.into()))
                 .collect(),
-            remember: request.remember_host_ids.into_iter().collect(),
+            remember: request
+                .remember_host_ids
+                .into_iter()
+                .filter(|id| same_login || id != &host.id)
+                .collect(),
             job: id.clone(),
             validate: validate.clone(),
             changed: changed.clone(),
@@ -363,6 +410,7 @@ pub(super) async fn start(
     });
     let task_state = state.clone();
     let job = id.clone();
+    let history_app = app.clone();
     let join = tokio::spawn(async move {
         control::execute(
             task_state.commands.clone(),
@@ -384,6 +432,17 @@ pub(super) async fn start(
             },
         )
         .await;
+        if let Some(run) = task_state.commands.list().into_iter().find(|r| r.id == job) {
+            task_state.activity.lock().unwrap().command_finished(
+                &host,
+                run.workflow_rule_id.as_deref(),
+                &run.service_id,
+                &job,
+                &run.phase,
+                run.error.as_deref() == Some("authentication"),
+            );
+            task_state.publish(&history_app);
+        }
         task_state.trust.lock().unwrap().remove(&job);
     });
     let mut workers = state.command_workers.lock().await;
@@ -534,7 +593,7 @@ mod tests {
         assert!(a.is_cancelled());
         assert!(!b.is_cancelled());
         assert_eq!(
-            state.remove_host("retired-jump", &[]).unwrap_err(),
+            state.remove_host("retired-jump", &[], &[]).unwrap_err(),
             "hostUsedByService"
         );
         assert!(state

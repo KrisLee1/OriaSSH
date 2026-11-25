@@ -1,6 +1,6 @@
 # 本地与 SSH 终端交互方案
 
-v0.5.0 实现说明。主窗口和 VNC 窗口共用终端视图，各会话独立工作。日常操作见[使用指南](USAGE.md#本地与-ssh-交互终端)。
+v0.5.0 实现说明。主窗口和 VNC 窗口共用终端视图，各会话独立工作。日常操作见[使用指南](../USAGE.md#本地与-ssh-交互终端)。
 
 ## 打开与关闭会话
 
@@ -92,7 +92,7 @@ CUDA-MOEA  DinosaurRun  Solar-System
 
 ## 实现边界
 
-TerminalView 将 xterm.js 输入送入当前会话的本地或 SSH PTY。屏幕上的一行文字可能是命令、历史输出或全屏程序界面。启动增强的依据应是 shell 行编辑器确认的可编辑状态。[终端视图](../src/features/terminal/terminal-view.tsx) · [Rust 终端会话](../src-tauri/src/terminal.rs)
+TerminalView 将 xterm.js 输入送入当前会话的本地或 SSH PTY。屏幕上的一行文字可能是命令、历史输出或全屏程序界面。启动增强的依据应是 shell 行编辑器确认的可编辑状态。[终端视图](../../src/features/terminal/terminal-view.tsx) · [Rust 终端会话](../../src-tauri/src/terminal.rs)
 
 - 本地启动时读取系统 shell。打开 SSH 交互终端时，在同一连接的独立通道识别 Bash 或 Zsh。会话级提示符钩子提供编辑边界、当前目录和环境。原生文本框处理光标定位、选区和输入法，编辑时向 shell 同步草稿与 UTF-8 字节偏移，提交时交还原生 PTY。目录名作为数据传递给当前 shell 的 cd 内建命令。
 - shell 集成标记命令提交、开始输出和重新就绪的边界，Rust 按会话与 PTY 输出顺序传递这些事件。历史视图按边界保存命令及其输出范围，遵守现有滚动缓冲上限。折叠只改变展示范围，实时 PTY 持续消费输出。缺少可靠边界的输出作为普通终端内容显示。

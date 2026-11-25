@@ -19,7 +19,7 @@ export function ExternalLink({
 
     event.preventDefault()
     void openExternalUrl(href).catch((error) => {
-      console.error("OriaTunnel: cannot open external link", error)
+      console.error("OriaSSH: cannot open external link", error)
     })
   }
 

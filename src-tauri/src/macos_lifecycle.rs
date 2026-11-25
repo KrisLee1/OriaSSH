@@ -162,7 +162,7 @@ mod tests {
     fn login_agent_roundtrip_uses_arguments_and_never_touches_real_launch_agents() {
         let directory = tempfile::tempdir().unwrap();
         let file = directory.path().join("fixture.plist");
-        let executable = Path::new("/Applications/Oria & Tunnel.app/Contents/MacOS/oria-tunnel");
+        let executable = Path::new("/Applications/Oria & Tunnel.app/Contents/MacOS/oria-ssh");
         assert!(!read_at(&file, executable).unwrap());
         set_at(&file, executable, true).unwrap();
         assert!(read_at(&file, executable).unwrap());
@@ -186,7 +186,7 @@ mod tests {
     fn malformed_or_foreign_login_job_is_preserved() {
         let directory = tempfile::tempdir().unwrap();
         let file = directory.path().join("fixture.plist");
-        let executable = Path::new("/Applications/OriaTunnel.app/Contents/MacOS/oria-tunnel");
+        let executable = Path::new("/Applications/OriaSSH.app/Contents/MacOS/oria-ssh");
         std::fs::write(&file, b"not a plist").unwrap();
         assert!(set_at(&file, executable, true).is_err());
         assert_eq!(std::fs::read(&file).unwrap(), b"not a plist");

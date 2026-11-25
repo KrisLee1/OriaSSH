@@ -1,12 +1,16 @@
-//! Strict v1/v2 package boundary. v2 commands remain disabled until separately reviewed.
+//! Strict portable package boundary. Imported commands require separate review.
 use crate::model::{
-    AuthMethod, ConnectionOptions, ForwardKind, Host, ReconnectPolicy, Rule, RuleIcon,
-    ServiceProtocol, Snapshot,
+    AuthMethod, ConnectionOptions, ForwardKind, Host, LoginIdentity, ReconnectPolicy, Rule,
+    RuleIcon, ServiceProtocol, Snapshot,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const MAX_BYTES: usize = 2 * 1024 * 1024;
+pub const MAX_HOSTS: usize = 500;
+pub const MAX_RULES: usize = 1000;
+pub const MAX_SERVICES: usize = 256;
+pub const MAX_LOGINS_PER_HOST: usize = 32;
 
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
@@ -80,10 +84,22 @@ pub struct Package {
     runtime_included: bool,
     #[serde(default)]
     services: Option<Vec<PortableService>>,
+    login_credentials: Option<Vec<LoginIdentity>>,
+    selected_host_ids: Option<Vec<String>>,
 }
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct PortableHost {
+    #[serde(default)]
+    logins: Vec<LoginIdentity>,
+    #[serde(default)]
+    credential_ids: Vec<String>,
+    #[serde(default)]
+    credential_only: bool,
+    #[serde(default)]
+    primary_login_label: String,
+    default_login_id: Option<String>,
+    appearance: Option<crate::model::HostAppearance>,
     id: String,
     name: String,
     address: String,
@@ -103,6 +119,10 @@ struct PortableHost {
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct PortableRule {
+    #[serde(rename = "loginIdentityId")]
+    _legacy_login_identity_id: Option<String>,
+    #[serde(rename = "followHostLogin")]
+    _legacy_follow_host_login: Option<bool>,
     #[serde(default)]
     icon: Option<RuleIcon>,
     id: String,
@@ -128,6 +148,8 @@ struct PortableRule {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct PortableService {
     #[serde(default)]
+    login_by_host: BTreeMap<String, String>,
+    #[serde(default)]
     direct_protocol: Option<crate::service::DirectProtocol>,
     #[serde(default)]
     port: Option<u16>,
@@ -151,6 +173,7 @@ struct PortableService {
 impl PortableService {
     fn definition(&self) -> crate::commands::Service {
         crate::commands::Service {
+            login_by_host: self.login_by_host.clone(),
             direct_protocol: self.direct_protocol,
             port: self.port,
             category: self.category.clone(),
@@ -172,10 +195,14 @@ impl PortableService {
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Choices {
+    #[serde(default)]
+    pub host_ids: Vec<String>,
     pub rule_ids: Vec<String>,
     #[serde(default)]
     pub service_ids: Vec<String>,
     pub reuse_hosts: BTreeMap<String, String>,
+    #[serde(default)]
+    pub reuse_logins: BTreeMap<String, BTreeMap<String, String>>,
     pub forward_only: bool,
 }
 #[derive(Serialize)]
@@ -187,6 +214,8 @@ pub struct Preview {
     services: Vec<ServicePreview>,
     hosts: Vec<HostPreview>,
     rules: Vec<RulePreview>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    selected_host_ids: Option<Vec<String>>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -199,6 +228,15 @@ struct HostPreview {
     key_paths: Vec<String>,
     proxy_jump: Option<String>,
     blocked: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    logins: Vec<LoginPreview>,
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LoginPreview {
+    id: String,
+    label: String,
+    user: String,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -223,6 +261,7 @@ pub struct Plan {
     pub hosts: Vec<Host>,
     pub rules: Vec<Rule>,
     pub services: Vec<crate::commands::Service>,
+    pub login_credentials: BTreeMap<String, LoginIdentity>,
 }
 fn text(value: &str) -> bool {
     value.len() <= 4096 && !value.chars().any(char::is_control)
@@ -282,24 +321,52 @@ pub fn parse(bytes: &[u8]) -> Result<Package, String> {
             }
         }
     }
-    if package.format != "oria-tunnel"
-        || !matches!(package.version, 1 | 2)
+    if !matches!(package.format.as_str(), "oria-ssh" | "oria-tunnel")
+        || !matches!(package.version, 1..=3)
         || (package.version == 1 && value.get("services").is_some())
-        || (package.version == 2 && package.services.is_none())
+        || (package.version >= 2 && package.services.is_none())
+        || (package.version == 3
+            && (package.login_credentials.is_none() || package.selected_host_ids.is_none()))
+        || (package.version < 3
+            && (value.get("loginCredentials").is_some()
+                || value.get("selectedHostIds").is_some()
+                || value["hosts"].as_array().into_iter().flatten().any(|host| {
+                    ["credentialIds", "credentialOnly", "primaryLoginLabel"]
+                        .iter()
+                        .any(|key| host.get(key).is_some())
+                })))
         || package.credentials_included
         || package.runtime_included
     {
         return Err(crate::native_message::plain("configVersion"));
     }
     if (package.hosts.is_empty() && (package.version == 1 || !package.rules.is_empty()))
-        || package.hosts.len() > 500
-        || (package.rules.is_empty() && package.services.as_ref().is_none_or(Vec::is_empty))
-        || package.rules.len() > 1000
-        || package.services.as_ref().is_some_and(|s| s.len() > 256)
+        || package.hosts.len() > MAX_HOSTS
+        || ((package.version < 3 || package.hosts.is_empty())
+            && package.rules.is_empty()
+            && package.services.as_ref().is_none_or(Vec::is_empty))
+        || package.rules.len() > MAX_RULES
+        || package
+            .services
+            .as_ref()
+            .is_some_and(|s| s.len() > MAX_SERVICES)
+        || package
+            .login_credentials
+            .as_ref()
+            .is_some_and(|logins| logins.len() > MAX_HOSTS * MAX_LOGINS_PER_HOST)
     {
         return Err(crate::native_message::plain("configLimits"));
     }
+    let credentials = package.credential_index();
+    for login in package.login_credentials.iter().flatten() {
+        crate::model::validate_logins(std::slice::from_ref(login))?;
+        if !login.identity_files.is_empty() {
+            return Err(crate::native_message::plain("configForbiddenFields"));
+        }
+    }
+    let mut referenced_credentials = BTreeSet::new();
     let mut ids = BTreeSet::new();
+    let mut validation_hosts = BTreeMap::new();
     for h in &package.hosts {
         if !id(&h.id)
             || !ids.insert(&h.id)
@@ -308,19 +375,61 @@ pub fn parse(bytes: &[u8]) -> Result<Package, String> {
             || h.address.is_empty()
             || !text(&h.address)
             || h.address.chars().any(char::is_whitespace)
-            || h.user.is_empty()
             || !text(&h.user)
-            || h.user.chars().any(char::is_whitespace)
+            || !crate::model::valid_ssh_user(&h.user)
             || h.port == 0
             || h.tags.len() > 50
             || h.tags.iter().any(|t| !text(t))
             || h.identity_files.len() > 32
             || h.identity_files.iter().any(|p| p.is_empty() || !text(p))
+            || h.primary_login_label.len() > 256
+            || !text(&h.primary_login_label)
+            || h.credential_ids.len() + h.logins.len() > MAX_LOGINS_PER_HOST
+            || (package.version == 3
+                && (!h.identity_files.is_empty()
+                    || h.logins
+                        .iter()
+                        .any(|login| !login.identity_files.is_empty())))
         {
             return Err(crate::native_message::plain("configHostsInvalid"));
         }
+        if h.credential_ids
+            .iter()
+            .any(|id| !credentials.contains_key(id.as_str()))
+            || (h.credential_only
+                && !h
+                    .default_login_id
+                    .as_ref()
+                    .is_some_and(|id| h.credential_ids.contains(id)))
+        {
+            return Err(crate::native_message::plain("loginIdentityMissing"));
+        }
+        referenced_credentials.extend(h.credential_ids.iter().map(String::as_str));
+        let host = h.resolved(&credentials);
+        crate::model::validate_logins(&host.logins)?;
+        host.default_login()?;
+        validation_hosts.insert(h.id.as_str(), host);
+        if let Some(appearance) = &h.appearance {
+            appearance.validate()?;
+        }
         h.connection.validate()?;
         crate::ssh_algorithms::preferred(&h.algorithms)?;
+    }
+    if package
+        .login_credentials
+        .as_ref()
+        .is_some_and(|logins| logins.len() != referenced_credentials.len())
+    {
+        return Err(crate::native_message::plain("configHostsInvalid"));
+    }
+    if package.selected_host_ids.as_ref().is_some_and(|selected| {
+        selected.iter().collect::<BTreeSet<_>>().len() != selected.len()
+            || selected.iter().any(|id| !ids.contains(id))
+            || (selected.is_empty()
+                && package.rules.is_empty()
+                && package.services.as_ref().is_none_or(Vec::is_empty))
+    }) {
+        return Err(crate::native_message::plain("importSelectionInvalid"));
     }
     let mut rule_ids = BTreeSet::new();
     for r in &package.rules {
@@ -349,6 +458,18 @@ pub fn parse(bytes: &[u8]) -> Result<Package, String> {
         {
             return Err("invalidServicePackage".into());
         }
+        for (id, login) in &service.login_by_host {
+            if !service.host_ids.contains(id) {
+                return Err("invalidServicePackage".into());
+            }
+            let resolved = validation_hosts
+                .get(id.as_str())
+                .ok_or("invalidServicePackage")?
+                .login(Some(login))?;
+            if package.version == 3 && resolved.login_id() != *login {
+                return Err(crate::native_message::plain("loginIdentityMissing"));
+            }
+        }
         service
             .definition()
             .validate()
@@ -367,20 +488,35 @@ pub fn parse(bytes: &[u8]) -> Result<Package, String> {
         }
     }
     // Validate the complete dependency graph before offering an import, including unselected routes.
-    let hosts = package
-        .hosts
-        .iter()
-        .map(|h| h.to_host(h.id.clone(), h.proxy_jump.clone()))
-        .collect::<Vec<_>>();
+    let hosts = validation_hosts.into_values().collect::<Vec<_>>();
     for h in &hosts {
         crate::model::resolve_jumps(&hosts, h)?;
     }
     Ok(package)
 }
 impl PortableHost {
+    fn resolved(&self, credentials: &BTreeMap<&str, &LoginIdentity>) -> Host {
+        let mut host = self.to_host(self.id.clone(), self.proxy_jump.clone());
+        host.logins.extend(
+            self.credential_ids
+                .iter()
+                .filter_map(|id| credentials.get(id.as_str()).copied().cloned()),
+        );
+        host
+    }
+
     fn to_host(&self, id: String, proxy_jump: Option<String>) -> Host {
         Host {
+            logins: self.logins.clone(),
+            credential_ids: self.credential_ids.clone(),
+            credential_only: self.credential_only,
+            primary_login_label: self.primary_login_label.clone(),
+            default_login_id: self
+                .default_login_id
+                .clone()
+                .filter(|id| id != &crate::model::primary_login_id(&self.id)),
             id,
+            appearance: self.appearance.clone(),
             name: self.name.clone(),
             address: self.address.clone(),
             port: self.port,
@@ -401,6 +537,7 @@ impl PortableRule {
     fn to_rule(&self, id: String, host_id: String) -> Rule {
         Rule {
             id,
+            login_identity_id: None,
             host_id,
             name: self.name.clone(),
             kind: self.kind,
@@ -423,11 +560,22 @@ impl PortableRule {
     }
 }
 impl Package {
+    fn credential_index(&self) -> BTreeMap<&str, &LoginIdentity> {
+        self.login_credentials
+            .iter()
+            .flatten()
+            .map(|login| (login.id.as_str(), login))
+            .collect()
+    }
+
     pub fn preview(&self, snapshot: &Snapshot, token: String, file_name: String) -> Preview {
+        let credentials = self.credential_index();
+        let v3 = self.version == 3;
         Preview {
             token,
             file_name,
             version: self.version,
+            selected_host_ids: self.selected_host_ids.clone(),
             services: self
                 .services
                 .iter()
@@ -461,6 +609,24 @@ impl Package {
                     key_paths: h.identity_files.clone(),
                     proxy_jump: h.proxy_jump.clone(),
                     blocked: h.connection_blocked,
+                    logins: if v3 {
+                        let host = h.resolved(&credentials);
+                        (!host.credential_only)
+                            .then(|| LoginPreview {
+                                id: crate::model::primary_login_id(&host.id),
+                                label: host.primary_login_label,
+                                user: host.user,
+                            })
+                            .into_iter()
+                            .chain(host.logins.into_iter().map(|login| LoginPreview {
+                                id: login.id,
+                                label: login.label,
+                                user: login.user,
+                            }))
+                            .collect()
+                    } else {
+                        Vec::new()
+                    },
                 })
                 .collect(),
             rules: self
@@ -479,7 +645,8 @@ impl Package {
                         .iter()
                         .any(|old| old.id == r.id || old.name == r.name),
                     listener_conflict: snapshot.rules.iter().any(|old| {
-                        old.bind_port == r.bind_port
+                        r.bind_port != 0
+                            && old.bind_port == r.bind_port
                             && old.bind_address == r.bind_address
                             && (old.kind == ForwardKind::R) == (r.kind == ForwardKind::R)
                     }),
@@ -489,8 +656,29 @@ impl Package {
         }
     }
     pub fn prepare(&self, snapshot: &Snapshot, choices: &Choices) -> Result<Plan, String> {
-        if choices.rule_ids.is_empty() && choices.service_ids.is_empty() {
-            return Err(crate::native_message::plain("selectImportItems"));
+        let v3 = self.version == 3;
+        if choices.host_ids.is_empty()
+            && choices.rule_ids.is_empty()
+            && choices.service_ids.is_empty()
+        {
+            return Err(crate::native_message::plain(if v3 {
+                "selectImportWorkspaceItems"
+            } else {
+                "selectImportItems"
+            }));
+        }
+        let selected_hosts = choices.host_ids.iter().collect::<BTreeSet<_>>();
+        if (!v3 && (!selected_hosts.is_empty() || !choices.reuse_logins.is_empty()))
+            || selected_hosts.len() != choices.host_ids.len()
+            || selected_hosts
+                .iter()
+                .any(|id| !self.hosts.iter().any(|host| &host.id == *id))
+            || choices
+                .reuse_logins
+                .keys()
+                .any(|id| !choices.reuse_hosts.contains_key(id))
+        {
+            return Err(crate::native_message::plain("importSelectionInvalid"));
         }
         let wanted: BTreeSet<_> = choices.rule_ids.iter().collect();
         if wanted.len() != choices.rule_ids.len()
@@ -508,24 +696,26 @@ impl Package {
         {
             return Err("invalidServicePackage".into());
         }
-        if snapshot.services.len() + selected_services.len() > 256 {
+        if snapshot.services.len() + selected_services.len() > MAX_SERVICES {
             return Err("servicePackageLimit".into());
         }
         for (old, existing) in &choices.reuse_hosts {
             if !self.hosts.iter().any(|h| &h.id == old)
-                || !snapshot
-                    .hosts
-                    .iter()
-                    .any(|h| &h.id == existing && h.diagnostics.is_empty())
+                || !snapshot.hosts.iter().any(|h| {
+                    &h.id == existing
+                        && h.diagnostics.is_empty()
+                        && (!v3 || snapshot.added_host_ids.contains(&h.id))
+                })
             {
                 return Err(crate::native_message::plain("reuseHostInvalid"));
             }
         }
         let mut needed = BTreeSet::new();
+        let credentials = self.credential_index();
         let originals = self
             .hosts
             .iter()
-            .map(|h| h.to_host(h.id.clone(), h.proxy_jump.clone()))
+            .map(|h| h.resolved(&credentials))
             .collect::<Vec<_>>();
         fn dependencies(
             id: &str,
@@ -545,6 +735,9 @@ impl Package {
                     dependencies(next, hosts, reuse, needed);
                 }
             }
+        }
+        for id in &selected_hosts {
+            dependencies(id, &originals, &choices.reuse_hosts, &mut needed);
         }
         for rule in self.rules.iter().filter(|r| wanted.contains(&r.id)) {
             if (rule.remote_command_omitted || !rule.no_remote_command) && !choices.forward_only {
@@ -569,6 +762,13 @@ impl Package {
         }) {
             return Err(crate::native_message::plain("importIncompatibleHost"));
         }
+        if v3
+            && wanted.is_empty()
+            && selected_services.is_empty()
+            && needed.iter().all(|id| choices.reuse_hosts.contains_key(id))
+        {
+            return Err(crate::native_message::plain("selectImportWorkspaceItems"));
+        }
         let mapping: BTreeMap<_, _> = needed
             .iter()
             .map(|id| {
@@ -582,6 +782,9 @@ impl Package {
                 )
             })
             .collect();
+        let mut shared_mapping = BTreeMap::new();
+        let mut login_credentials = BTreeMap::new();
+        let mut local_mappings = BTreeMap::new();
         let mut hosts = self
             .hosts
             .iter()
@@ -602,7 +805,32 @@ impl Package {
                                 .map(|ids| ids.join(","))
                         })
                         .transpose()?;
-                Ok(h.to_host(mapping[&h.id].clone(), jump))
+                let mut host = h.to_host(mapping[&h.id].clone(), jump);
+                if v3 {
+                    let mut logins = BTreeMap::from([(
+                        crate::model::primary_login_id(&h.id),
+                        crate::model::primary_login_id(&host.id),
+                    )]);
+                    for login in &mut host.logins {
+                        let id = uuid::Uuid::new_v4().to_string();
+                        logins.insert(std::mem::replace(&mut login.id, id.clone()), id);
+                    }
+                    for credential_id in &mut host.credential_ids {
+                        let id = shared_mapping
+                            .entry(credential_id.clone())
+                            .or_insert_with(|| {
+                                let mut login = credentials[credential_id.as_str()].clone();
+                                login.id = uuid::Uuid::new_v4().to_string();
+                                login_credentials.insert(login.id.clone(), login.clone());
+                                login.id
+                            });
+                        logins.insert(std::mem::replace(credential_id, id.clone()), id.clone());
+                    }
+                    host.default_login_id =
+                        h.default_login_id.as_ref().map(|id| logins[id].clone());
+                    local_mappings.insert(h.id.clone(), logins);
+                }
+                Ok(host)
             })
             .collect::<Result<Vec<_>, String>>()?;
         let mut host_names = snapshot.hosts.iter().map(|h| h.name.clone()).collect();
@@ -610,10 +838,50 @@ impl Package {
             host.name = unique_name(&host.name, &mut host_names);
         }
         let mut candidates = snapshot.hosts.clone();
-        candidates.extend(hosts.clone());
+        candidates.extend(hosts.iter().cloned().map(|mut host| {
+            host.logins.extend(
+                host.credential_ids
+                    .iter()
+                    .map(|id| login_credentials[id].clone()),
+            );
+            host
+        }));
         for h in &hosts {
             crate::model::resolve_jumps(&candidates, h)?;
         }
+        let remap_login = |old_host: &str, login: Option<&str>| -> Result<String, String> {
+            let invalid = || crate::native_message::plain("importLoginMapping");
+            let source_id = originals
+                .iter()
+                .find(|h| h.id == old_host)
+                .ok_or_else(invalid)?
+                .login(login)?
+                .login_id();
+            let mapped = if choices.reuse_hosts.contains_key(old_host) {
+                choices
+                    .reuse_logins
+                    .get(old_host)
+                    .and_then(|logins| logins.get(&source_id))
+            } else {
+                local_mappings
+                    .get(old_host)
+                    .and_then(|logins| logins.get(&source_id))
+            }
+            .ok_or_else(invalid)?;
+            let target_host = &mapping[old_host];
+            let target = candidates
+                .iter()
+                .find(|h| &h.id == target_host)
+                .ok_or_else(invalid)?;
+            if target
+                .login(Some(mapped))
+                .is_ok_and(|login| login.login_id() == *mapped)
+            {
+                Ok(mapped.clone())
+            } else {
+                Err(invalid())
+            }
+        };
         let rule_mapping: BTreeMap<_, _> = self
             .rules
             .iter()
@@ -632,6 +900,12 @@ impl Package {
             .collect::<Vec<_>>();
         let mut rule_names = snapshot.rules.iter().map(|r| r.name.clone()).collect();
         for rule in &mut rules {
+            let host = candidates
+                .iter()
+                .find(|h| h.id == rule.host_id)
+                .ok_or("hostMissing")?;
+            rule.resolve_host_login(host);
+            host.login(rule.login_identity_id.as_deref())?;
             rule.name = unique_name(&rule.name, &mut rule_names);
         }
         let mut service_names = snapshot.services.iter().map(|s| s.name.clone()).collect();
@@ -647,6 +921,30 @@ impl Package {
             service.revision = uuid::Uuid::new_v4().to_string();
             service.name = unique_name(&service.name, &mut service_names);
             service.execution_host_id.clear();
+            service.login_by_host.clear();
+            for (old, login) in &imported.login_by_host {
+                if !imported.host_ids.contains(old) {
+                    return Err("serviceUnbound".into());
+                }
+                let id = mapping.get(old).ok_or("hostMissing")?;
+                if v3 {
+                    let mapped = remap_login(old, Some(login))?;
+                    if service
+                        .login_by_host
+                        .insert(id.clone(), mapped.clone())
+                        .is_some_and(|previous| previous != mapped)
+                    {
+                        return Err(crate::native_message::plain("importLoginMapping"));
+                    }
+                } else if login != &crate::model::primary_login_id(old) {
+                    candidates
+                        .iter()
+                        .find(|h| &h.id == id)
+                        .ok_or("hostMissing")?
+                        .login(Some(login))?;
+                    service.login_by_host.insert(id.clone(), login.clone());
+                }
+            }
             service.rule_ids = imported
                 .rule_ids
                 .iter()
@@ -665,7 +963,7 @@ impl Package {
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .collect();
-            if service.port.is_none() {
+            if !v3 && service.port.is_none() {
                 let ports: BTreeSet<_> = rules
                     .iter()
                     .filter(|r| service.rule_ids.contains(&r.id) && r.kind != ForwardKind::D)
@@ -681,7 +979,7 @@ impl Package {
                     service.port = ports.into_iter().next();
                 }
             }
-            if let Some(port) = service.port {
+            if let Some(port) = service.port.filter(|_| !v3) {
                 for rule in rules
                     .iter_mut()
                     .filter(|r| service.rule_ids.contains(&r.id))
@@ -724,12 +1022,21 @@ impl Package {
             hosts,
             rules,
             services,
+            login_credentials,
         })
     }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn previous_brand_packages_share_the_same_validation() {
+        let mut old = fixture();
+        old["format"] = "oria-tunnel".into();
+        assert!(parse(&serde_json::to_vec(&old).unwrap()).is_ok());
+        old["credentialsIncluded"] = true.into();
+        assert!(parse(&serde_json::to_vec(&old).unwrap()).is_err());
+    }
     #[test]
     fn upload_and_dropped_path_feed_the_same_strict_package_boundary() {
         let content = serde_json::to_string(&fixture()).unwrap();
@@ -839,6 +1146,33 @@ mod tests {
         parse(&serde_json::to_vec(value).unwrap())
     }
     #[test]
+    fn automatic_local_ports_survive_import_without_claiming_a_fixed_listener() {
+        let mut value = fixture();
+        value["rules"][0]["bindPort"] = 0.into();
+        let snapshot = Snapshot {
+            rules: vec![Rule::default()],
+            ..Default::default()
+        };
+        for kind in ["L", "D"] {
+            value["rules"][0]["kind"] = kind.into();
+            let package = parsed(&value).unwrap();
+            let preview = package.preview(&snapshot, "preview".into(), "fixture.json".into());
+            assert!(!preview.rules[0].listener_conflict);
+            let plan = package
+                .prepare(
+                    &snapshot,
+                    &Choices {
+                        rule_ids: vec!["rule".into()],
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            assert_eq!(plan.rules[0].bind_port, 0);
+        }
+        value["rules"][0]["kind"] = "R".into();
+        assert!(parsed(&value).is_err());
+    }
+    #[test]
     fn icons_round_trip_and_invalid_icons_are_rejected() {
         for icon in [
             serde_json::Value::Null,
@@ -847,6 +1181,8 @@ mod tests {
         ] {
             let mut value = fixture();
             value["rules"][0]["icon"] = icon.clone();
+            let appearance = serde_json::json!({"icon":icon,"color":"#123456"});
+            value["hosts"][0]["appearance"] = appearance.clone();
             let package = parsed(&value).unwrap();
             let plan = package
                 .prepare(
@@ -874,6 +1210,11 @@ mod tests {
             )
             .unwrap();
             assert_eq!(exported["rules"][0]["icon"], icon);
+            assert!(exported["hosts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|h| h["appearance"] == appearance));
         }
         let mut value = fixture();
         value["rules"][0].as_object_mut().unwrap().remove("icon");
@@ -1107,6 +1448,10 @@ mod tests {
         let plan = package.prepare(&snapshot, &choices).unwrap();
         assert!(plan.hosts.is_empty());
         assert_eq!(plan.rules[0].host_id, "existing");
+        assert_eq!(
+            plan.rules[0].login_identity_id.as_deref(),
+            Some("primary:existing")
+        );
     }
     #[test]
     fn ordered_inline_profiles_export_and_import_with_all_dependencies() {
@@ -1171,6 +1516,47 @@ mod tests {
         });
         value["services"] = serde_json::json!([{"id":"service","name":"Model","executionHostId":"host","ruleIds":["rule"],"noLocalEnvironment":true,"actions":t.actions,"control":control}]);
         value
+    }
+    #[test]
+    fn portable_login_bindings_follow_the_imported_host_and_keep_execution_disabled() {
+        let mut value = service_fixture();
+        let login = uuid::Uuid::new_v4().to_string();
+        let h = value["hosts"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|h| h["id"] == "host")
+            .unwrap();
+        h["logins"] =
+            serde_json::json!([{"id":login,"user":"deploy","label":"deploy","authMethod":"agent"}]);
+        h["defaultLoginId"] = login.clone().into();
+        value["rules"][0]["loginIdentityId"] = login.clone().into();
+        value["services"][0]["hostIds"] = serde_json::json!(["host"]);
+        value["services"][0]["loginByHost"] = serde_json::json!({"host":login});
+        let plan = parsed(&value)
+            .unwrap()
+            .prepare(
+                &Snapshot::default(),
+                &Choices {
+                    rule_ids: vec!["rule".into()],
+                    service_ids: vec!["service".into()],
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let rule = &plan.rules[0];
+        let service = &plan.services[0];
+        let host = plan.hosts.iter().find(|h| h.id == rule.host_id).unwrap();
+        assert_ne!(host.id, "host");
+        assert_eq!(
+            host.login(rule.login_identity_id.as_deref()).unwrap().user,
+            "deploy"
+        );
+        assert_eq!(service.login_by_host.get(&host.id), Some(&login));
+        assert_eq!(host.default_login_id.as_ref(), Some(&login));
+        assert!(!service.execution_enabled);
+        value["services"][0]["loginByHost"]["host"] = "missing".into();
+        assert!(parsed(&value).is_err());
     }
     #[test]
     fn service_appearance_and_structured_arguments_survive_sharing_without_execution_permission() {
@@ -1291,6 +1677,8 @@ mod tests {
         assert_eq!(exported["services"][0]["actions"][0]["timeoutSecs"], 0);
         assert!(parsed(&exported).is_ok());
         value["services"][0]["actions"][0]["mode"] = "command".into();
+        assert!(parsed(&value).is_ok());
+        value["services"][0]["actions"][0]["kind"] = "status".into();
         assert!(parsed(&value).is_err());
     }
     #[test]
@@ -1613,6 +2001,8 @@ mod tests {
         let a = snapshot.services[0].actions[0].clone();
         snapshot.services[0].actions = (0..32)
             .map(|i| crate::commands::Action {
+                systemd_launch: None,
+                service_port_variable: false,
                 id: format!("a-{i}"),
                 command: "x".into(),
                 ..a.clone()
@@ -1640,3 +2030,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod workspace_tests;

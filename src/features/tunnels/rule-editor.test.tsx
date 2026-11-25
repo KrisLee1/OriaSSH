@@ -15,76 +15,80 @@ function render(draft: Rule, hasHost = false) {
       reconnect={false}
       onChange={() => {}}
       onAddHost={() => {}}
-      onManageHosts={() => {}}
       onSave={() => {}}
       onCancel={() => {}}
     />,
   );
 }
 describe("forward composition and semantics", () => {
-  it("locks L/R service ports while leaving the D listener independent and filtering by host", () => {
+  it("shows the current host username without a separate credential selector", () => {
+    const host = {
+      ...emptyHost(), id: "h", name: "fixture", address: "host.invalid", user: "primary-user",
+      defaultLoginId: "alternate",
+      logins: [{ id: "alternate", label: "Other", user: "alternate-user", authMethod: "password" as const, identityFiles: [] }],
+    };
+    const html = renderToStaticMarkup(
+      <RuleEditor
+        draft={{ ...emptyRule("h"), loginIdentityId: "primary:h" }}
+        hosts={[host]}
+        busy={false}
+        reconnect={false}
+        onChange={() => {}}
+        onAddHost={() => {}}
+        onSave={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    expect(html).toContain("alternate-user@host.invalid");
+    expect(html).not.toContain("primary-user@host.invalid");
+    expect(html).not.toContain(i18n.t("logins", { ns: "tunnel" }));
+  });
+  it("shows the multi-service picker only for D and preserves existing L/R ports", () => {
+    const association = i18n.t("associatedServices", { ns: "commands" });
     for (const kind of ["L", "R", "D"] as const) {
+      const draft = { ...emptyRule("h"), id: "saved", kind, bindPort: 15432 };
       const html = renderToStaticMarkup(
         <RuleEditor
-          draft={{ ...emptyRule("h"), kind, bindPort: 15432 }}
+          draft={draft}
+          savedRule={draft}
           hosts={[{ ...emptyHost(), id: "h" }]}
           services={[
-            {
-              ...newService("h"),
-              id: "selected",
-              name: "linked-service",
-              port: 3689,
-            },
-            {
-              ...newService("other"),
-              id: "foreign",
-              name: "foreign-service",
-              port: 3000,
-            },
+            { ...newService("h"), id: "chosen", name: "linked-service", port: 3689, ruleIds: [draft.id] },
+            { ...newService("other"), id: "foreign", name: "foreign-service", port: 3000 },
           ]}
-          selectedServiceIds={["selected", "foreign"]}
+          selectedServiceIds={["chosen", "foreign"]}
           busy={false}
           reconnect={false}
           onChange={() => {}}
           onAddHost={() => {}}
-          onManageHosts={() => {}}
           onSave={() => {}}
           onCancel={() => {}}
         />,
       );
-      const ports = [...html.matchAll(/<input[^>]*type="number"[^>]*>/g)].map(
-        (m) => m[0],
-      );
-      expect(html).toContain("linked-service");
+      const ports = [...html.matchAll(/<input[^>]*type="number"[^>]*>/g)].map((match) => match[0]);
       expect(html).not.toContain("foreign-service");
       if (kind === "D") {
-        expect(
-          ports.some(
-            (p) => p.includes('value="15432"') && !p.includes("readOnly"),
-          ),
-        ).toBe(true);
-        expect(ports.some((p) => p.includes('value="3689"'))).toBe(false);
-      } else
-        expect(
-          ports.some(
-            (p) => p.includes('value="3689"') && p.includes("readOnly"),
-          ),
-        ).toBe(true);
+        expect(html).toContain(association);
+        expect(html).toContain("linked-service");
+        expect(ports.some(port => port.includes('value="15432"') && !port.includes("readOnly"))).toBe(true);
+        expect(ports.some(port => port.includes('value="3689"'))).toBe(false);
+      } else {
+        expect(html).not.toContain(association);
+        expect(html).not.toContain("linked-service");
+        expect(ports.some(port => port.includes('value="3689"') && port.includes("readOnly"))).toBe(true);
+      }
+      expect(html.includes("profile-icon-trigger")).toBe(kind !== "L");
     }
   });
   const text = (key: string) => i18n.t(key, { ns: "tunnel" });
   it("keeps a forward editor when no host exists and provides separate host actions", () => {
     const html = render(emptyRule());
     expect(html).toContain(text("forwardType"));
-    expect(html.indexOf(text("forwardType"))).toBeLessThan(
-      html.indexOf(
-        'aria-label="' + i18n.t("services", { ns: "commands" }) + '"',
-      ),
-    );
+    expect(html.indexOf(text("forwardType"))).toBeLessThan(html.indexOf(text("path")));
     expect(html).toContain(text("selectHostSearch"));
     expect(html).toContain('role="combobox"');
     expect(html).toContain(text("addHost"));
-    expect(html).toContain(text("manageHosts"));
+    expect(html).not.toContain(text("manageHosts"));
     expect(html.indexOf(text("forwardType"))).toBeGreaterThan(
       html.indexOf(text("manageHosts")),
     );
@@ -92,7 +96,7 @@ describe("forward composition and semantics", () => {
     expect(html).not.toContain(text("identity"));
     expect(html).toContain("disabled");
   });
-  it("keeps host actions adjacent to the host selector and service management with services", () => {
+  it("keeps host actions by the selector and omits global service management", () => {
     const html = renderToStaticMarkup(
       <RuleEditor
         draft={emptyRule()}
@@ -101,8 +105,6 @@ describe("forward composition and semantics", () => {
         reconnect={false}
         onChange={() => {}}
         onAddHost={() => {}}
-        onManageHosts={() => {}}
-        onManageServices={() => {}}
         onSave={() => {}}
         onCancel={() => {}}
       />,
@@ -110,21 +112,32 @@ describe("forward composition and semantics", () => {
     expect(html.indexOf(text("addHost"))).toBeLessThan(
       html.indexOf(text("selectHostSearch")),
     );
-    expect(html.indexOf(text("manageHosts"))).toBeLessThan(
-      html.indexOf(i18n.t("manageServices", { ns: "commands" })),
-    );
+    expect(html).not.toContain(text("manageHosts"));
+    expect(html).not.toContain(i18n.t("manageServices", { ns: "commands" }));
     expect(html).toContain("field-heading-actions");
   });
   it("renders R endpoints on the correct machine and D without fixed target controls", () => {
     const r = render({ ...emptyRule("h"), kind: "R" }, true);
     expect(r).toContain(text("remoteBindAddress"));
     expect(r).toContain(text("localTargetHost"));
-    expect(r).toContain(text("dnsR"));
+    expect(r).toContain(text("forwardListener"));
+    expect(r).toContain(text("forwardTarget"));
     const d = render({ ...emptyRule("h"), kind: "D" }, true);
-    expect(d).toContain(text("socksHint"));
+    expect(d).toContain(text("forwardListener"));
+    expect(d).not.toContain(text("forwardTarget"));
     expect(d).not.toContain(text("targetPort"));
     expect(d).not.toContain(text("targetHost"));
-    expect(d).toContain(text("dnsD"));
+    expect(d).not.toContain(text("serviceProtocol"));
+  });
+  it("keeps an editable listener input with an automatic toggle for L and D", () => {
+    for (const kind of ["L", "D"] as const) {
+      const html = render({ ...emptyRule("h"), kind }, true);
+      expect(html).toContain(`placeholder="${text("autoPortAssigned")}"`);
+      expect(html).toMatch(/<input[^>]*data-port-field="bind"[^>]*>/);
+      expect(html).toMatch(/<button[^>]*aria-pressed="true"[^>]*>[^<]*<\/button>/);
+    }
+    const remote = render({ ...emptyRule("h"), kind: "R" }, true);
+    expect(remote).not.toContain(text("autoPortAssigned"));
   });
   it("defaults to no remote command and supports host inheritance or explicit keepalive", () => {
     const html = render(emptyRule("h"), true);
@@ -151,11 +164,27 @@ describe("forward composition and semantics", () => {
     expect(configured).toContain("（-o ServerAliveInterval）");
     expect(configured).toContain("（-o RemoteCommand）");
   });
+  it("offers deferred save and explicit restart for changes to a running listener", () => {
+    const activeRule = { ...emptyRule("h"), id: "rule", name: "running", bindPort: 8080 };
+    const actions = (draft: Rule) => renderToStaticMarkup(<RuleEditor
+      draft={draft} activeRule={activeRule} hosts={[{...emptyHost(), id: "h"}]}
+      reconnect={false} busy={false} onChange={() => {}} onSave={() => {}}
+      onCancel={() => {}} onAddHost={() => {}}
+    />);
+    const changed = actions({ ...activeRule, bindPort: 0 });
+    expect(changed).toContain(text("saveNextStart"));
+    expect(changed).toContain(text("saveReconnect"));
+    expect(changed).toContain(text("restartHint"));
+    const renamed = actions({ ...activeRule, name: "renamed" });
+    expect(renamed).not.toContain(text("saveReconnect"));
+    expect(renamed).not.toContain(text("saveStart"));
+  });
   it("preserves IPv6 path meaning and distinguishes metadata edits from reconnecting", () => {
     const rule = {
       ...emptyRule("h"),
       kind: "R" as const,
       bindAddress: "::1",
+      bindPort: 15432,
       targetHost: "::1",
     };
     expect(rulePath(rule, "ssh", "local")).toContain(

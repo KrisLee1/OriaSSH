@@ -20,7 +20,18 @@ export interface UpdateSnapshot {
   canDownload: boolean;
   canInstall: boolean;
 }
+export interface LoginIdentity {
+  id: string; label?: string; user: string;
+  authMethod: Host["authMethod"]; identityFiles: string[];
+}
 export interface Host {
+  logins?: LoginIdentity[];
+  credentialIds?: string[];
+  credentialOnly?: boolean;
+  primaryLoginLabel?: string;
+  defaultLoginId?: string | null;
+  activeLoginId?: string;
+  appearance?: { icon: RuleIcon | null; color: string | null } | null;
   id: string;
   name: string;
   address: string;
@@ -55,6 +66,7 @@ export type ServiceProtocol = "http" | "https" | "vnc";
 export type DirectProtocol = ServiceProtocol | "postgresql" | "mysql" | "mongodb" | "redis" | "rediss";
 export type RuleIcon = { kind: "builtin" | "emoji"; value: string };
 export interface Rule {
+  loginIdentityId?: string | null;
   icon: RuleIcon | null;
   serviceProtocol: ServiceProtocol | null;
   id: string;
@@ -79,7 +91,12 @@ export interface Rule {
   autoConnect: boolean;
   repeatCommandOnReconnect: boolean;
 }
+export type ForwardRoute = Pick<Rule, "kind" | "hostId" | "bindAddress" | "bindPort" | "targetHost" | "targetPort">;
+
 export interface Runtime {
+  activeRoute?: ForwardRoute | null;
+  boundAddress?: string | null;
+  boundPort?: number | null;
   ruleId: string;
   runId: string;
   status: string;
@@ -112,6 +129,7 @@ export interface Runtime {
   }[];
 }
 export interface ActivityRecord {
+  hostId?: string; loginIdentityId?: string; username?: string; serviceIds?: string[];
   timestamp: number;
   ruleId: string;
   runId: string;
@@ -130,6 +148,7 @@ export interface ImportPreview {
   token: string;
   fileName: string;
   version?: number;
+  selectedHostIds?: string[];
   services?: ImportServicePreview[];
   hosts: {
     id: string;
@@ -140,6 +159,7 @@ export interface ImportPreview {
     keyPaths: string[];
     proxyJump?: string;
     blocked: boolean;
+    logins?: { id: string; label: string; user: string }[];
   }[];
   rules: {
     id: string;
@@ -155,13 +175,31 @@ export type ImportSource =
   | { kind: "upload"; fileName: string; content: string }
   | { kind: "path"; path: string };
 export interface ImportChoices {
+  hostIds?: string[];
   ruleIds: string[];
   serviceIds?: string[];
   reuseHosts: Record<string, string>;
+  reuseLogins?: Record<string, Record<string, string>>;
   forwardOnly: boolean;
+}
+export type ConfigExportMode = "migration" | "share";
+export interface ConfigExportSelection {
+  hostIds: string[];
+  ruleIds: string[];
+  serviceIds: string[];
+  includeServiceCommands: boolean;
+}
+export interface ConfigExportPreview {
+  fingerprint: string;
+  hosts: { id: string; name: string; endpoint: string; dependency: boolean }[];
+  serviceCount: number;
+  ruleCount: number;
+  logins: { id: string; label: string; user: string }[];
 }
 export interface Snapshot {
   services?: RemoteService[];
+  loginCredentials?: LoginIdentity[];
+  passwordStorageSupported?: boolean;
   hosts: Host[];
   addedHostIds?: string[];
   rules: Rule[];
@@ -180,18 +218,27 @@ export interface Snapshot {
   autostartError?: string;
 }
 
+export interface HostDeletionImpact {
+  rules: Rule[];
+  services: { id: string; name: string; revision: string; remove: boolean }[];
+  active: boolean;
+}
+
 export type CommandKind = "start" | "stop" | "restart" | "status" | "logs" | "custom";
 export interface CommandArgument { name: string; value: string | null }
 export interface CommandEnvironment { name: string; value: string }
 export interface CommandInvocation { executable: string; arguments: CommandArgument[]; environment?: CommandEnvironment[]; script?: string }
 export interface ServiceLink { id: string; revision: string; selected: boolean }
 export interface PresetAction {
+  systemdLaunch?: { unit: string; mode: "persistent" | "transient" };
+  servicePortVariable?: boolean;
   invocation?: CommandInvocation | null;
   mode?: "command" | "terminal";
   id: string; kind: CommandKind; label: string; command: string;
   timeoutSecs: number; successCodes: number[]; confirm: boolean;
 }
 export interface RemoteService {
+  loginByHost?: Record<string, string>;
   directProtocol?: DirectProtocol | null;
   hostIds?: string[];
   port?: number | null;
@@ -201,6 +248,8 @@ export interface RemoteService {
   revision: string; noLocalEnvironment: boolean; actions: PresetAction[]; control?: ServiceControl; executionEnabled?: boolean;
 }
 export interface CommandRun {
+  loginId?: string;
+
   id: string; requestId: string; serviceId: string; actionId: string; serviceRevision: string;
   hostId: string; hostName: string; endpoint: string; actionLabel: string;
   phase: string; submitted: boolean; exitCode: number | null; exitSignal: string | null;
@@ -213,6 +262,9 @@ export interface CommandOutput { sequence: number; stream: "stdout" | "stderr"; 
 export interface CommandEvent { run: CommandRun; output: CommandOutput[]; reset: boolean }
 
 export interface TerminalSession {
+  serviceRevision?: string;
+  loginId?: string;
+
   local?: boolean;
   ruleId?:string|null;
   routeHostIds: string[];
@@ -223,23 +275,29 @@ export interface TerminalSession {
 }
 export interface TerminalFrame { powerShellEditor: boolean; id: string; sequence: number; bytes: number[] }
 export interface OpenTerminalRequest {
+  loginId?: string;
+
   hostId: string; requestId: string; clientId: string; cols: number; rows: number; noLocalEnvironment: boolean;
   serviceId?: string; actionId?: string; ruleId?:string; revision?: string; confirmed: boolean;
   secrets: Record<string, string>; rememberHostIds: string[];
 }
 
 export interface ServiceControl {
-  statusProbe: {actionId:string;mode:"output"|"exitCode"|"json";runningCodes:number[];stoppedCodes:number[];failedCodes:number[]}|null;
+  statusProbe: {actionId:string;mode:"output"|"exitCode"|"json"|"vncSessions";runningCodes:number[];stoppedCodes:number[];failedCodes:number[]}|null;
   healthProbe: {command:string;readyCodes:number[];notReadyCodes:number[];repeatable:boolean;timeoutSecs:number;intervalSecs:number;budgetSecs:number}|null;
   startActionId:string|null;checkAfterActions:boolean;ttlSecs:number;
 }
 export interface ServiceFact {value:string;checkedAt:number|null;validUntil:number|null;sourceRunId:string|null;expired:boolean}
-export interface ServiceObservation {hostId?:string|null;ruleId?:string|null;serviceId:string;serviceRevision:string;hostIdentity:string;status:ServiceFact;health:ServiceFact;revision:number}
+export interface ServiceObservation {loginId?:string;hostId?:string|null;ruleId?:string|null;serviceId:string;serviceRevision:string;hostIdentity:string;status:ServiceFact;health:ServiceFact;revision:number}
 export interface ServiceStep {kind:string;phase:string;attempt:number;exitCode:number|null;error:string|null;startedAt:number;finishedAt:number|null}
 export type ServiceOperation = "action"|"checkStatus"|"checkHealth"|"connect";
-export interface StartServiceRequest {serviceId:string;revision:string;requestId:string;operation:ServiceOperation;actionId?:string;ruleId?:string;confirmed:boolean;secrets:Record<string,string>;rememberHostIds:string[]}
+export interface StartServiceRequest {
+  loginId?: string;
+serviceId:string;revision:string;requestId:string;operation:ServiceOperation;actionId?:string;ruleId?:string;confirmed:boolean;secrets:Record<string,string>;rememberHostIds:string[]}
 
 export interface ImportServicePreview {
   id:string;name:string;executionHostId:string;endpoint:string;ruleIds:string[];noLocalEnvironment:boolean;actions:PresetAction[];control:ServiceControl;conflict:boolean;
+  hostIds?: string[];
+  loginByHost?: Record<string, string>;
 }
-export interface ServiceTemplate {category?:string|null;name?:string;color?:string;icon?:RuleIcon;actions:PresetAction[];control:ServiceControl;resource:string;shell:string}
+export interface ServiceTemplate {category?:string|null;name?:string;color?:string;icon?:RuleIcon;port?:number;actions:PresetAction[];control:ServiceControl;resource:string;shell:string}

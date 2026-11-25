@@ -1,7 +1,7 @@
 #![cfg(any(unix, windows))]
 #[path = "common/terminal_server.rs"]
 mod server;
-use oria_tunnel_lib::{
+use oria_ssh_lib::{
     model::{timestamp, AuthMethod, Host},
     terminal::{self, Manager, Session},
     tunnel,
@@ -20,6 +20,8 @@ fn summary(id: &str) -> Session {
         client_id: "client".into(),
         host_id: "host".into(),
         route_host_ids: vec!["host".into()],
+        login_id: None,
+        service_revision: None,
         host_name: "test".into(),
         endpoint: "isolated".into(),
         service_id: None,
@@ -238,6 +240,7 @@ async fn dedicated_exec_is_a_real_pty_and_honors_exit_codes_and_timeout() {
             5,
         ),
         ("timeout", "sleep 30", "timedOut", 1),
+        ("confirmed-exit", "fixture-exit-before-close", "exited", 1),
         (
             "unlimited",
             "sleep 0.05; printf 'unlimited-pty\\n'",
@@ -251,6 +254,7 @@ async fn dedicated_exec_is_a_real_pty_and_honors_exit_codes_and_timeout() {
         // This case checks the real PTY and exit code; the 1s timeout case stays strict.
         ("exec", "if ([Console]::IsInputRedirected -or [Console]::IsOutputRedirected) { exit 9 }; Write-Output 'real-pty'; exit 7", "failed", 45),
         ("timeout", "Start-Sleep -Seconds 30", "timedOut", 1),
+        ("confirmed-exit", "fixture-exit-before-close", "exited", 1),
         ("unlimited", "Start-Sleep -Milliseconds 50; Write-Output 'unlimited-pty'; exit 0", "exited", 0),
     ];
     for (id, command, phase, timeout) in cases {
@@ -270,6 +274,9 @@ async fn dedicated_exec_is_a_real_pty_and_honors_exit_codes_and_timeout() {
         if id == "exec" {
             assert_eq!(result.exit_code, Some(7));
             wait_text(&bytes, 0, "real-pty").await;
+        } else if id == "confirmed-exit" {
+            assert_eq!(result.exit_code, Some(0));
+            wait_text(&bytes, 0, "late terminal output").await;
         } else if id == "unlimited" {
             assert_eq!(result.exit_code, Some(0));
             wait_text(&bytes, 0, "unlimited-pty").await;
@@ -522,7 +529,16 @@ async fn shell_editor_runs_commands_and_changes_real_directory_on_loopback() {
                 .input(&s.id, "client", sequence, value.to_vec())
                 .unwrap();
         };
-        let ready = wait_text(&bytes, 0, "]6973;editor;ready;0;").await;
+        let ready_marker = "]6973;editor;ready;0;";
+        let ready = wait_text(&bytes, 0, ready_marker).await;
+        let start = ready + ready_marker.len();
+        let end = wait_text(&bytes, start, "\x07").await;
+        let payload = data_encoding::BASE64
+            .decode(&bytes.lock().unwrap()[start..end])
+            .unwrap();
+        let fields = payload.split(|&byte| byte == 0).collect::<Vec<_>>();
+        assert_eq!(fields[7], shell.rsplit('/').next().unwrap().as_bytes());
+        assert!(!fields[8].is_empty());
         if shell == "/bin/zsh" {
             // zsh emits its reverse-video EOL decoration even when the startup screen is empty.
             let bytes = bytes.lock().unwrap();

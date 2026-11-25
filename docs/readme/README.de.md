@@ -1,13 +1,13 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="../assets/oriatunnel-logo-dark.svg">
-    <img src="../assets/oriatunnel-logo.svg" alt="OriaTunnel" width="440">
+    <source media="(prefers-color-scheme: dark)" srcset="../assets/oriassh-logo-dark.svg">
+    <img src="../assets/oriassh-logo.svg" alt="OriaSSH" width="440">
   </picture>
 </p>
 
 <h1 align="center">Ein SSH-Arbeitsbereich für die Serververwaltung</h1>
 
-<p align="center">OriaTunnel vereint SSH-Tunnel, entfernte Dienste, Terminals, Dateiübertragungen und Remotedesktops in einer grafischen Oberfläche.</p>
+<p align="center">OriaSSH vereint SSH-Tunnel, entfernte Dienste, Terminals, Dateiübertragungen und Remotedesktops in einer grafischen Oberfläche.</p>
 
 <p align="center">
   <a href="../../README.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.en.md">English</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a> · Deutsch · <a href="README.fr.md">Français</a> · <a href="README.ru.md">Русский</a>
@@ -45,6 +45,8 @@
 
 ## Herunterladen und installieren
 
+OriaSSH hieß früher OriaTunnel. Die Installationspakete für v0.5.0 und die damit installierte Anwendung tragen noch den alten Namen.
+
 | Plattform | Installationspaket v0.5.0 | Installation |
 | --- | --- | --- |
 | macOS | [Apple Silicon](https://github.com/KrisLee1/OriaTunnel/releases/download/v0.5.0/OriaTunnel_0.5.0_aarch64.dmg) · [Intel](https://github.com/KrisLee1/OriaTunnel/releases/download/v0.5.0/OriaTunnel_0.5.0_x64.dmg) | Öffnen Sie das Image und ziehen Sie OriaTunnel in den Ordner „Programme“. |
@@ -54,13 +56,13 @@
 
 **v0.5.0** · Terminals lassen sich per Drag-and-drop teilen. Für Windows-SSH-Hosts steht die intelligente PowerShell-Eingabe zur Verfügung. Die Übertragung großer Ordner, die Fortsetzung nach Verbindungsabbrüchen und die Reaktionszeit der Bereiche wurden verbessert. Unter **Über** können Sie nach Updates suchen.
 
-[Versionshinweise (Chinesisch)](../releases/v0.5.0.md) · [Alle Versionen](https://github.com/KrisLee1/OriaTunnel/releases)
+[Versionshinweise (Chinesisch)](../releases/v0.5.0.md) · [Alle Versionen](https://github.com/KrisLee1/OriaSSH/releases)
 
 ## Schnellstart
 
 In diesem Beispiel läuft auf dem SSH-Server bereits ein Webdienst auf Port 3000.
 
-1. Öffnen Sie OriaTunnel und wählen Sie **Host hinzufügen**. Wählen Sie einen aus der SSH-Konfiguration gefundenen Host oder geben Sie seine Daten manuell ein. Die Hostsuche liest nur die Konfiguration und stellt keine automatische Verbindung her.
+1. Öffnen Sie OriaSSH und wählen Sie **Host hinzufügen**. Wählen Sie einen aus der SSH-Konfiguration gefundenen Host oder geben Sie seine Daten manuell ein. Die Hostsuche liest nur die Konfiguration und stellt keine automatische Verbindung her.
 2. Wählen Sie **Neue Weiterleitung**, den Host und die lokale Weiterleitung (L). Tragen Sie lokal `127.0.0.1:13000` und als Ziel auf dem SSH-Server `127.0.0.1:3000` ein.
 3. Wählen Sie **Speichern und starten**, authentifizieren Sie sich bei Aufforderung und prüfen Sie bei der ersten Verbindung den Fingerabdruck des Servers. Sobald **Listener bereit** erscheint, öffnen Sie `http://127.0.0.1:13000` im lokalen Browser.
 
@@ -74,11 +76,11 @@ Beim nächsten Mal starten Sie die gespeicherte Regel. Lädt die Seite nicht, pr
 | **R · Entfernte Weiterleitung** | Einem Server Zugriff auf einen Entwicklungsdienst dieses Computers geben | Einen Listen-Port auf dem Server verwenden, der über SSH zum lokalen Dienst führt |
 | **D · Dynamische Weiterleitung** | Über einen SSH-Host mehrere interne Adressen erreichen | Separaten Proxy-Browser über das Menü öffnen oder einen anderen Client für lokales SOCKS5 konfigurieren |
 
-Liegt bereits eine OriaTunnel-Konfiguration vor, importieren und prüfen Sie diese auf der Weiterleitungsseite und ergänzen Ihre Authentifizierung. Importierte Dienstvorlagen müssen vor der Ausführung geprüft und freigegeben werden. Siehe [vorbereitete Konfiguration nutzen (Chinesisch)](../USAGE.md#使用现成配置).
+Liegt bereits eine OriaSSH-Konfiguration vor, importieren und prüfen Sie diese auf der Weiterleitungsseite und ergänzen Ihre Authentifizierung. Importierte Dienstvorlagen müssen vor der Ausführung geprüft und freigegeben werden. Siehe [vorbereitete Konfiguration nutzen (Chinesisch)](../USAGE.md#使用现成配置).
 
 ## Bildschirmansichten
 
-Die hellen und dunklen Ansichten zeigen die Oberfläche mit Beispieldaten aus der OriaTunnel-Demo in OriaMadeWeb.
+Die Screenshots im hellen und dunklen Design zeigen die Website-Demo vor der Umbenennung mit Beispieldaten.
 
 | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/connection-map-dark.png"><img src="../assets/screenshots/connection-map-light.png" alt="Verbindungsübersicht"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="../assets/screenshots/terminal-dark.png"><img src="../assets/screenshots/terminal-light.png" alt="Befehlssammlung im Terminal"></picture> |
 | :---: | :---: |
@@ -95,12 +97,12 @@ Die hellen und dunklen Ansichten zeigen die Oberfläche mit Beispieldaten aus de
 
 ## Dokumentation und Support
 
-[Vollständiges Benutzerhandbuch (vereinfachtes Chinesisch)](../USAGE.md) · [Fehlerhilfe (Chinesisch)](../USAGE.md#查看状态与排查问题) · [Entwicklerhandbuch (vereinfachtes Chinesisch)](../DEVELOPMENT.md) · [GitHub Issues](https://github.com/KrisLee1/OriaTunnel/issues)
+[Vollständiges Benutzerhandbuch (vereinfachtes Chinesisch)](../USAGE.md) · [Fehlerhilfe (Chinesisch)](../USAGE.md#查看状态与排查问题) · [Entwicklerhandbuch (vereinfachtes Chinesisch)](../DEVELOPMENT.md) · [GitHub Issues](https://github.com/KrisLee1/OriaSSH/issues)
 
 ## Lizenz
 
 Copyright (C) 2026 KrisLee.
 
-OriaTunnel steht unter der **GNU General Public License, ausschließlich Version 3 (GPL-3.0-only)**. Die vollständigen Bedingungen finden Sie in [LICENSE](../../LICENSE).
+OriaSSH steht unter der **GNU General Public License, ausschließlich Version 3 (GPL-3.0-only)**. Die vollständigen Bedingungen finden Sie in [LICENSE](../../LICENSE).
 
 Die Software wird ohne Gewährleistung gemäß den Lizenzbedingungen bereitgestellt. Für Code, Abhängigkeiten und Ressourcen Dritter gelten weiterhin deren jeweilige Lizenzen und Hinweise. Beigefügte Lizenztexte stehen unter [docs/licenses](../licenses).

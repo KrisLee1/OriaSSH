@@ -6,8 +6,6 @@ import {
   OutputDecoder,
   changeActionKind,
   newAction,
-  newService,
-  copyService,
 } from "./command-model";
 import { ServiceEditor } from "./preset-commands";
 import type { CommandRun, Snapshot, RemoteService } from "@/types";
@@ -19,62 +17,6 @@ const run = {
   finishedAt: null,
 } as CommandRun;
 describe("command output and configuration", () => {
-  it("creates an independent service draft with fresh action references and preserves disabled permission", () => {
-    const start = {
-      ...newAction("start", "Start"),
-      command: "PORT='8000' 'worker'",
-      invocation: {
-        executable: "worker",
-        arguments: [],
-        environment: [{ name: "PORT", value: "8000" }],
-      },
-    };
-    const status = { ...newAction("status", "Status"), command: "check" };
-    const source: RemoteService = {
-      ...newService(""),
-      id: "original",
-      revision: "revision",
-      name: "Worker",
-      category: "inference",
-      ruleIds: ["rule"],
-      executionEnabled: false,
-      color: "#123456",
-      icon: { kind: "builtin", value: "brain" },
-      actions: [start, status],
-      control: {
-        statusProbe: {
-          actionId: status.id,
-          mode: "output",
-          runningCodes: [0],
-          stoppedCodes: [3],
-          failedCodes: [],
-        },
-        startActionId: start.id,
-        healthProbe: null,
-        ttlSecs: 60,
-        checkAfterActions: false,
-      },
-    };
-    const copy = copyService(source);
-    expect(copy).toMatchObject({
-      id: "",
-      revision: "",
-      executionHostId: "",
-      ruleIds: [],
-      category: "inference",
-      executionEnabled: false,
-      name: "Worker",
-      color: "#123456",
-      icon: source.icon,
-    });
-    expect(copy.actions[0].id).not.toBe(start.id);
-    expect(copy.actions[1].id).not.toBe(status.id);
-    expect(copy.control?.startActionId).toBe(copy.actions[0].id);
-    expect(copy.control?.statusProbe?.actionId).toBe(copy.actions[1].id);
-    copy.actions[0].invocation!.environment![0].value = "9000";
-    expect(source.actions[0].invocation!.environment![0].value).toBe("8000");
-    expect(source.ruleIds).toEqual(["rule"]);
-  });
   it("updates default action titles with the selected kind while preserving custom names and scripts", () => {
     const labels = {
       start: "启动",

@@ -22,7 +22,7 @@ describe("update notification", () => {
     expect(title).not.toContain("（");
     expect(title).not.toContain("关于中下载");
     const icon = renderToStaticMarkup(<>{notification.data?.icon}</>);
-    expect(icon).toContain("oria-tunnel-logo.svg");
+    expect(icon).toContain("oria-ssh-logo.svg");
     expect(icon).toContain('aria-hidden="true"');
     expect(notification.actionProps?.children).toBe("去更新");
   });

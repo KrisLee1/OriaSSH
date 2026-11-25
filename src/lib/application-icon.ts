@@ -4,7 +4,7 @@ import { setApplicationIcon } from "@/lib/bridge"
 import type { ApplicationIconPreference, ResolvedApplicationIcon } from "@/types"
 
 export const APPLICATION_ICON_STORAGE_KEY = "oria-tunnel.application-icon.v1"
-const APPLICATION_ICON_CHANGE_EVENT = "oria-tunnel:application-icon-change"
+const APPLICATION_ICON_CHANGE_EVENT = "oria-ssh:application-icon-change"
 
 export function readStoredApplicationIcon(raw: string | null): ApplicationIconPreference {
   return raw === "light" || raw === "dark" || raw === "mono" ? raw : "system"

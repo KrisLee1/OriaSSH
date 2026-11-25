@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { FieldError } from "@/components/ui/field";
 import { useNativeFileDrop } from "@/hooks/use-native-file-drop";
 import { ServiceReview } from "@/features/commands/service-review";
+import { primaryLogin } from "@/features/hosts/login-identities";
 import { cn } from "@/lib/utils";
 import {
   Select,
@@ -21,6 +22,7 @@ const MAX_IMPORT_BYTES = 2 * 1024 * 1024;
 
 export function ImportConfig({
   hosts,
+  addedHostIds,
   busy,
   close,
   previewFile,
@@ -28,6 +30,7 @@ export function ImportConfig({
   submit,
 }: {
   hosts: Host[];
+  addedHostIds?: string[];
   busy: boolean;
   close: () => void;
   previewFile: (source: ImportSource) => Promise<ImportPreview>;
@@ -123,9 +126,11 @@ export function ImportConfig({
     <Modal
       title={t("importConfig")}
       description={
-        preview?.services?.length
-          ? t("sharing.previewHint", { ns: "commands" })
-          : t(preview ? "importHint" : "importFileHint")
+        preview?.version === 3
+          ? t("importWorkspaceHint")
+          : preview?.services?.length
+            ? t("sharing.previewHint", { ns: "commands" })
+            : t(preview ? "importHint" : "importFileHint")
       }
       close={() => {
         if (!disabled) close();
@@ -153,6 +158,7 @@ export function ImportConfig({
             key={preview.token}
             preview={preview}
             hosts={hosts}
+            addedHostIds={addedHostIds}
             busy={disabled}
             close={close}
             submit={(choices) =>
@@ -236,95 +242,258 @@ export function ImportConfig({
 export function ImportConfigReview({
   preview,
   hosts,
+  addedHostIds,
   busy,
   close,
   submit,
 }: {
   preview: ImportPreview;
   hosts: Host[];
+  addedHostIds?: string[];
   busy: boolean;
   close: () => void;
   submit: (choices: ImportChoices) => Promise<boolean>;
 }) {
   const { t } = useTranslation("tunnel");
+  const workspace = preview.version === 3;
+  const [selectedHosts, setSelectedHosts] = useState(
+    preview.selectedHostIds ?? [],
+  );
   const [selected, setSelected] = useState(
     preview.rules.filter((r) => !r.commandOmitted).map((r) => r.id),
   );
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
   const [reuseHosts, setReuseHosts] = useState<Record<string, string>>({});
+  const [reuseLogins, setReuseLogins] = useState<
+    NonNullable<ImportChoices["reuseLogins"]>
+  >({});
   const [forwardOnly, setForwardOnly] = useState(false);
+  const selection = workspace
+    ? importDependencies(
+        preview,
+        selectedHosts,
+        selected,
+        selectedServices,
+        reuseHosts,
+      )
+    : undefined;
+  const reused = (id: string) =>
+    Object.hasOwn(reuseHosts, id) ? reuseHosts[id] : undefined;
+  const availableHosts = hosts.filter(
+    (host) =>
+      !host.diagnostics.length &&
+      (!workspace || (addedHostIds?.includes(host.id) ?? true)),
+  );
+  const requiredReuseLogins = Object.fromEntries(
+    Array.from(selection?.bindings ?? [])
+      .filter(([hostId]) => reused(hostId))
+      .map(([hostId, ids]) => [
+        hostId,
+        Object.fromEntries(
+          [...ids].map((id) => [id, reuseLogins[hostId]?.[id] || ""]),
+        ),
+      ]),
+  );
+  const missingMapping = Object.values(requiredReuseLogins).some((logins) =>
+    Object.values(logins).includes(""),
+  );
+  const newHostCount = selection
+    ? [...selection.hosts].filter((id) => !reused(id)).length
+    : 0;
   const blocked =
-    selected.some(
+    (selected.some(
       (id) => preview.rules.find((r) => r.id === id)?.commandOmitted,
-    ) && !forwardOnly;
+    ) &&
+      !forwardOnly) ||
+    (workspace &&
+      (missingMapping ||
+        preview.hosts.some(
+          (host) =>
+            host.blocked && selection?.hosts.has(host.id) && !reused(host.id),
+        )));
   return (
     <>
       <h3>
         {t("hosts")} · {preview.hosts.length}
       </h3>
-      {preview.hosts.map((h) => (
-        <div className="import-entry themed-surface" key={h.id}>
-          <strong>{h.name}</strong>
-          <code>{h.endpoint}</code>
-          {h.conflict && <p className="muted">{t("importHostConflict")}</p>}
-          {h.blocked && (
-            <p className="inline-error">{t("importHostBlocked")}</p>
-          )}
-          {h.keyPathsOmitted && (
-            <p className="inline-error">{t("importMissingKeys")}</p>
-          )}
-          {!!h.keyPaths.length && (
-            <p className="muted">
-              {t("identity")}: {h.keyPaths.join(", ")}
-            </p>
-          )}
-          {h.proxyJump && <p className="muted">ProxyJump: {h.proxyJump}</p>}
-          <Field label={t("importHostAction")}>
-            <Select
-              items={[
-                { value: "", label: t("importAsCopy") },
-                ...hosts
-                  .filter((old) => !old.diagnostics.length)
-                  .map((old) => ({
-                    value: old.id,
-                    label: t("importReuse", {
-                      name: `${old.name} · ${old.user}@${old.address}:${old.port}`,
-                    }),
-                  })),
-              ]}
-              value={reuseHosts[h.id] || ""}
-              disabled={busy}
-              onValueChange={(value) => {
-                const next = { ...reuseHosts };
-                if (value) next[h.id] = value;
-                else delete next[h.id];
-                setReuseHosts(next);
-              }}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent alignItemWithTrigger={false}>
-                <SelectItem value="">{t("importAsCopy")}</SelectItem>
-                {hosts
-                  .filter((old) => !old.diagnostics.length)
-                  .map((old) => (
-                    <SelectItem value={old.id} key={old.id}>
-                      {t("importReuse", {
+      {preview.hosts.map((h) => {
+        const needed = !selection || selection.hosts.has(h.id);
+        const chosen = selectedHosts.includes(h.id);
+        const local = availableHosts.find((host) => host.id === reused(h.id));
+        const localLogins = local
+          ? [
+              ...(local.credentialOnly
+                ? []
+                : [
+                    {
+                      id: primaryLogin(local),
+                      label: local.primaryLoginLabel,
+                      user: local.user,
+                    },
+                  ]),
+              ...(local.logins ?? []),
+            ]
+          : [];
+        const loginOptions = localLogins.map(({ id, label, user }) => ({
+          value: id,
+          label: label ? `${label} · ${user}` : user,
+        }));
+        return (
+          <div
+            className={cn(
+              "import-entry themed-surface",
+              workspace && "workspace-import-entry",
+            )}
+            key={h.id}
+          >
+            {workspace ? (
+              <label className="check-field">
+                <input
+                  type="checkbox"
+                  checked={chosen}
+                  disabled={busy}
+                  onChange={(e) =>
+                    setSelectedHosts((before) =>
+                      e.target.checked
+                        ? [...before, h.id]
+                        : before.filter((id) => id !== h.id),
+                    )
+                  }
+                />
+                <strong>{h.name}</strong>
+              </label>
+            ) : (
+              <strong>{h.name}</strong>
+            )}
+            <code className="wrap-anywhere">{h.endpoint}</code>
+            {workspace && needed && !chosen && (
+              <p className="muted">{t("configDependency")}</p>
+            )}
+            {h.conflict && <p className="muted">{t("importHostConflict")}</p>}
+            {h.blocked && needed && (!workspace || !local) && (
+              <p className="inline-error">{t("importHostBlocked")}</p>
+            )}
+            {h.keyPathsOmitted && needed && (!workspace || !local) && (
+              <p className="inline-error">{t("importMissingKeys")}</p>
+            )}
+            {!!h.keyPaths.length && (
+              <p className="muted">
+                {t("identity")}: {h.keyPaths.join(", ")}
+              </p>
+            )}
+            {h.proxyJump && (
+              <p className="muted wrap-anywhere">
+                ProxyJump:{" "}
+                {workspace
+                  ? h.proxyJump
+                      .split(",")
+                      .map(
+                        (id) =>
+                          preview.hosts.find((host) => host.id === id.trim())
+                            ?.name || id.trim(),
+                      )
+                      .join(" → ")
+                  : h.proxyJump}
+              </p>
+            )}
+            {needed && (
+              <Field label={t("importHostAction")}>
+                <Select
+                  items={[
+                    { value: "", label: t("importAsCopy") },
+                    ...availableHosts.map((old) => ({
+                      value: old.id,
+                      label: t("importReuse", {
                         name: `${old.name} · ${old.user}@${old.address}:${old.port}`,
-                      })}
-                    </SelectItem>
-                  ))}
-              </SelectContent>
-            </Select>
-          </Field>
-        </div>
-      ))}
+                      }),
+                    })),
+                  ]}
+                  value={reused(h.id) || ""}
+                  disabled={busy}
+                  onValueChange={(value) => {
+                    setReuseLogins((previous) => ({ ...previous, [h.id]: {} }));
+                    const next = { ...reuseHosts };
+                    if (value) next[h.id] = value;
+                    else delete next[h.id];
+                    setReuseHosts(next);
+                  }}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent alignItemWithTrigger={false}>
+                    <SelectItem value="">{t("importAsCopy")}</SelectItem>
+                    {availableHosts.map((old) => (
+                      <SelectItem value={old.id} key={old.id}>
+                        {t("importReuse", {
+                          name: `${old.name} · ${old.user}@${old.address}:${old.port}`,
+                        })}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+            )}
+            {workspace &&
+              local &&
+              needed &&
+              Object.entries(requiredReuseLogins[h.id] ?? {}).map(
+                ([sourceId, value]) => {
+                  const source = h.logins?.find(
+                    (login) => login.id === sourceId,
+                  );
+                  const sourceName = source?.label
+                    ? `${source.label} · ${source.user}`
+                    : (source?.user ?? sourceId);
+                  const label = t("importMapLogin", { source: sourceName });
+                  return (
+                    <Field key={sourceId} label={label}>
+                      <Select
+                        items={loginOptions}
+                        value={value || null}
+                        disabled={busy}
+                        onValueChange={(target) =>
+                          setReuseLogins((previous) => ({
+                            ...previous,
+                            [h.id]: {
+                              ...previous[h.id],
+                              [sourceId]: target || "",
+                            },
+                          }))
+                        }
+                      >
+                        <SelectTrigger
+                          className="w-full min-w-0"
+                          aria-label={label}
+                        >
+                          <SelectValue placeholder={t("importChooseLogin")} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {loginOptions.map((login) => (
+                            <SelectItem key={login.value} value={login.value}>
+                              {login.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </Field>
+                  );
+                },
+              )}
+          </div>
+        );
+      })}
       <h3>
         {t("tunnels")} · {preview.rules.length}
       </h3>
       {preview.rules.map((r) => (
-        <div className="import-entry themed-surface" key={r.id}>
+        <div
+          className={cn(
+            "import-entry themed-surface",
+            workspace && "workspace-import-entry",
+          )}
+          key={r.id}
+        >
           <label className="check-field">
             <input
               type="checkbox"
@@ -361,7 +530,13 @@ export function ImportConfigReview({
           </p>
           {preview.services.map((service) => {
             return (
-              <section className="import-entry themed-surface" key={service.id}>
+              <section
+                className={cn(
+                  "import-entry themed-surface",
+                  workspace && "workspace-import-entry",
+                )}
+                key={service.id}
+              >
                 <label className="check-field">
                   <input
                     type="checkbox"
@@ -413,32 +588,94 @@ export function ImportConfigReview({
           ? t("sharing.importStopped", { ns: "commands" })
           : t("importStopped")}
       </p>
+      {workspace && missingMapping && (
+        <p className="muted">{t("importChooseLogin")}</p>
+      )}
       <ModalActions>
         <Button variant="ghost" disabled={busy} onClick={close}>
           {t("cancel")}
         </Button>
         <Button
+          className="h-auto min-h-8 max-w-full py-1.5 whitespace-normal wrap-anywhere"
           disabled={
-            busy || (!selected.length && !selectedServices.length) || blocked
+            busy ||
+            (!selected.length && !selectedServices.length && !newHostCount) ||
+            blocked
           }
           onClick={() =>
             void submit({
               ruleIds: selected,
               serviceIds: selectedServices,
-              reuseHosts,
+              ...(workspace
+                ? { hostIds: selectedHosts, reuseLogins: requiredReuseLogins }
+                : {}),
+              reuseHosts: selection
+                ? Object.fromEntries(
+                    Object.entries(reuseHosts).filter(([id]) =>
+                      selection.hosts.has(id),
+                    ),
+                  )
+                : reuseHosts,
               forwardOnly,
             })
           }
         >
-          {selectedServices.length
-            ? t("sharing.importSelected", {
-                ns: "commands",
+          {workspace
+            ? t("importWorkspaceSelection", {
+                hosts: newHostCount,
                 services: selectedServices.length,
                 forwards: selected.length,
               })
-            : t("importSelected", { count: selected.length })}
+            : selectedServices.length
+              ? t("sharing.importSelected", {
+                  ns: "commands",
+                  services: selectedServices.length,
+                  forwards: selected.length,
+                })
+              : t("importSelected", { count: selected.length })}
         </Button>
       </ModalActions>
     </>
   );
+}
+
+export function importDependencies(
+  preview: ImportPreview,
+  hostIds: string[],
+  ruleIds: string[],
+  serviceIds: string[],
+  reuseHosts: Record<string, string>,
+) {
+  const pending = [...hostIds];
+  const bindings = new Map<string, Set<string>>();
+  const addBinding = (hostId: string, loginId: string) => {
+    const logins = bindings.get(hostId) ?? new Set<string>();
+    logins.add(loginId);
+    bindings.set(hostId, logins);
+  };
+  for (const rule of preview.rules) {
+    if (!ruleIds.includes(rule.id)) continue;
+    pending.push(rule.hostId);
+  }
+  for (const service of preview.services ?? []) {
+    if (!serviceIds.includes(service.id)) continue;
+    pending.push(...(service.hostIds ?? []));
+    for (const [hostId, loginId] of Object.entries(service.loginByHost ?? {})) {
+      addBinding(hostId, loginId);
+    }
+  }
+  const sources = new Map(
+    preview.hosts.map((host) => [host.id, host.proxyJump]),
+  );
+  const hosts = new Set<string>();
+  while (pending.length) {
+    const id = pending.pop()!;
+    if (hosts.has(id)) continue;
+    hosts.add(id);
+    const jumps = sources.get(id);
+    if (!Object.hasOwn(reuseHosts, id) && jumps) {
+      pending.push(...jumps.split(",").map((id) => id.trim()));
+    }
+  }
+  return { hosts, bindings };
 }

@@ -15,6 +15,15 @@ use tokio_util::sync::CancellationToken;
 
 pub const OUTPUT_LIMIT: usize = 2 * 1024 * 1024;
 pub const TOTAL_OUTPUT_LIMIT: usize = 16 * OUTPUT_LIMIT;
+pub(crate) const EXIT_DRAIN_TIME: Duration = Duration::from_millis(250);
+
+pub(crate) async fn execution_deadline(seconds: u64) {
+    if seconds == 0 {
+        std::future::pending::<()>().await;
+    } else {
+        tokio::time::sleep(Duration::from_secs(seconds)).await;
+    }
+}
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ExecutionMode {
@@ -34,6 +43,10 @@ pub struct EnvironmentVariable {
     pub name: String,
     pub value: String,
 }
+fn quote_shell_word(word: &str) -> String {
+    format!("'{}'", word.replace('\'', "'\"'\"'"))
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Invocation {
@@ -61,7 +74,7 @@ impl Invocation {
         {
             return Err("invalidAction".into());
         }
-        let quote = |s: &str| format!("'{}'", s.replace('\'', "'\"'\"'"));
+        let quote = quote_shell_word;
         let mut words = vec![quote(&self.executable)];
         let managed = self.executable.rsplit('/').next() == Some("systemd-run");
         let mut names = std::collections::HashSet::new();
@@ -122,8 +135,26 @@ impl Invocation {
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SystemdLaunchMode {
+    Persistent,
+    Transient,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SystemdLaunch {
+    pub unit: String,
+    pub mode: SystemdLaunchMode,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Action {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub systemd_launch: Option<SystemdLaunch>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub service_port_variable: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub invocation: Option<Invocation>,
     #[serde(default)]
@@ -136,9 +167,204 @@ pub struct Action {
     pub success_codes: Vec<u32>,
     pub confirm: bool,
 }
+impl Action {
+    pub fn allows_unlimited(&self) -> bool {
+        self.systemd_launch.is_none()
+            && (self.mode == ExecutionMode::Terminal
+                || matches!(self.kind.as_str(), "start" | "restart" | "logs" | "custom"))
+    }
+
+    pub fn use_foreground_timeout(&mut self) {
+        if self.systemd_launch.is_none()
+            && self.kind == "start"
+            && self.timeout_secs == 60
+            && direct_dsh_web(&self.command)
+        {
+            self.timeout_secs = 0;
+        }
+    }
+
+    pub fn resolved(&self, port: Option<u16>) -> Result<Self, String> {
+        let mut action = self.clone();
+        if !self.service_port_variable {
+            return Ok(action);
+        }
+        let expand = |value: &mut String| -> Result<(), String> {
+            if value.contains("{{service.port}}") {
+                let port = port.filter(|p| *p > 0).ok_or("servicePortRequired")?;
+                *value = value.replace("{{service.port}}", &port.to_string());
+            }
+            Ok(())
+        };
+        if let Some(invocation) = &mut action.invocation {
+            if let Some(script) = &mut invocation.script {
+                expand(script)?;
+            }
+            for arg in &mut invocation.arguments {
+                if let Some(value) = &mut arg.value {
+                    expand(value)?;
+                }
+            }
+            action.command = invocation.render()?;
+        } else {
+            expand(&mut action.command)?;
+        }
+        Ok(action)
+    }
+
+    pub fn for_execution(&self, port: Option<u16>) -> Result<Self, String> {
+        let mut action = self.resolved(port)?;
+        if let Some(launcher) = &self.systemd_launch {
+            action.command = launcher.wrap(&action)?;
+            if action.command.len() > 65536 {
+                return Err("invalidAction".into());
+            }
+        }
+        Ok(action)
+    }
+}
+
+impl SystemdLaunch {
+    fn wrap(&self, action: &Action) -> Result<String, String> {
+        if action.mode != ExecutionMode::Command
+            || action.timeout_secs == 0
+            || !(action.kind == "start"
+                || action.kind == "restart" && matches!(self.mode, SystemdLaunchMode::Transient))
+            || !self.unit.ends_with(".service")
+            || self.unit.len() > 136
+            || !self
+                .unit
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_alphanumeric)
+            || !self
+                .unit
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"_.-@:".contains(&c))
+        {
+            return Err("invalidAction".into());
+        }
+        let unit = quote_shell_word(&self.unit);
+        let shell_body = || quote_shell_word(&action.command.replace('$', "$$"));
+        let persistent = matches!(self.mode, SystemdLaunchMode::Persistent);
+        let mut options = String::from("systemd-run --user --no-ask-password");
+        if persistent {
+            options.push_str(" --service-type=exec");
+        } else {
+            options.push_str(" --collect");
+        }
+        options.push_str(&format!(" --unit={unit}"));
+        let argv = action.invocation.as_ref().filter(|i| {
+            i.script.is_none()
+                && (!persistent || !i.environment.iter().any(|var| var.name == "PATH"))
+                && i.executable.rsplit('/').next() != Some("systemd-run")
+        });
+        if !argv.is_some_and(|i| i.environment.iter().any(|var| var.name == "PATH")) {
+            // Older systemd-run versions require an explicit value. PATH belongs to the SSH session.
+            options.push_str(" --setenv=\"PATH=$PATH\"");
+        }
+        let launch = if let Some(argv) = argv {
+            let mut words = vec![options];
+            for var in &argv.environment {
+                words.push(quote_shell_word(&format!(
+                    "--setenv={}={}",
+                    var.name, var.value
+                )));
+            }
+            words.push("--".into());
+            words.push(quote_shell_word(&argv.executable));
+            for arg in &argv.arguments {
+                if !arg.name.is_empty() {
+                    words.push(quote_shell_word(&arg.name));
+                }
+                if let Some(value) = &arg.value {
+                    words.push(quote_shell_word(&value.replace('$', "$$")));
+                }
+            }
+            words.join(" ")
+        } else {
+            format!("{options} -- /bin/sh -c {}", shell_body())
+        };
+        if persistent {
+            Ok(format!(
+                r#"linger=$(loginctl show-user "$(id -u)" --property=Linger --value) || exit $?
+if [ "$linger" != yes ]; then
+  printf '%s\n' 'Linger is disabled. To keep this service running after logout, enable it for this SSH user with loginctl enable-linger.' >&2
+  exit 1
+fi
+state=$(systemctl --user show --property=ActiveState --value -- {unit})
+case "$state" in
+  active) exit 0 ;;
+  failed) systemctl --user reset-failed -- {unit} || exit $? ;;
+esac
+{launch}"#
+            ))
+        } else if action.kind == "restart" {
+            Ok(format!(
+                r#"load=$(systemctl --user show --property=LoadState --value -- {unit})
+load_result=$?
+if [ "$load" = not-found ]; then
+{launch}
+elif [ "$load_result" -eq 0 ] && [ "$load" = loaded ]; then
+systemctl --user restart -- {unit}
+else
+exit 5
+fi"#
+            ))
+        } else {
+            Ok(launch)
+        }
+    }
+}
+
+// Recognize the legacy direct recipe only. Keep the deadline for shell chains,
+// explicitly different timeouts, and commands that manage a separate process.
+fn direct_dsh_web(command: &str) -> bool {
+    fn literal(word: &str) -> &str {
+        for quote in ['\'', '"'] {
+            if let Some(value) = word.strip_prefix(quote).and_then(|s| s.strip_suffix(quote)) {
+                return value;
+            }
+        }
+        word
+    }
+    let command = command.trim();
+    if command.contains(['\n', '\r']) {
+        return false;
+    }
+    let mut words = command.split_ascii_whitespace().map(literal);
+    if words.next() != Some("dsh") {
+        return false;
+    }
+    match words.next() {
+        Some("web") => {}
+        Some("--profile") if words.next() == Some("web") => {}
+        _ => return false,
+    }
+    while let Some(option) = words.next() {
+        if option == "--no-open" {
+            continue;
+        }
+        let (name, value) = match option.split_once('=') {
+            Some((name, value)) => (name, literal(value)),
+            None => (option, words.next().unwrap_or_default()),
+        };
+        let allowed = match name {
+            "--port" => value == "{{service.port}}" || value.parse::<u16>().is_ok(),
+            "--host" => value == "localhost" || value.parse::<std::net::IpAddr>().is_ok(),
+            _ => false,
+        };
+        if !allowed {
+            return false;
+        }
+    }
+    true
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Service {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub login_by_host: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub direct_protocol: Option<crate::service::DirectProtocol>,
     #[serde(default)]
@@ -168,7 +394,94 @@ pub struct Service {
 fn enabled_by_default() -> bool {
     true
 }
+// Decode only the canonical, single shell word produced by the legacy editor.
+fn legacy_managed_command(unit: &str, command: &str) -> Option<String> {
+    let target = quote_shell_word(unit);
+    let prefix = format!(
+        r#"if [ "$(loginctl show-user "$(id -u)" --property=Linger --value 2>/dev/null)" != yes ]; then
+  printf '%s\n' 'systemd user service requires Linger=yes to survive logout.' >&2
+  exit 1
+fi
+if [ "$(systemctl --user show --property=ActiveState --value -- {target} 2>/dev/null)" = failed ]; then
+  systemctl --user reset-failed -- {target} || exit $?
+fi
+systemd-run --user --no-ask-password --service-type=exec --unit={target} --setenv=PATH -- /bin/sh -c "#
+    );
+    let word = command.strip_prefix(&prefix)?;
+    let body = word
+        .strip_prefix('\'')?
+        .strip_suffix('\'')?
+        .replace("'\"'\"'", "'");
+    (quote_shell_word(&body) == word && !body.replace("$$", "").contains('$'))
+        .then(|| body.replace("$$", "$"))
+}
+
 impl Service {
+    pub fn prepare_managed_actions(&mut self) {
+        let Some(start) = self
+            .actions
+            .iter_mut()
+            .find(|a| Some(&a.id) == self.control.start_action_id.as_ref())
+        else {
+            return;
+        };
+        if start.systemd_launch.is_none()
+            && start.invocation.is_none()
+            && start.kind == "start"
+            && start.mode == ExecutionMode::Command
+        {
+            let unit = format!("oriatunnel-{}.service", self.id);
+            if let Some(command) = legacy_managed_command(&unit, &start.command) {
+                start.command = command;
+                start.systemd_launch = Some(SystemdLaunch {
+                    unit,
+                    mode: SystemdLaunchMode::Persistent,
+                });
+            }
+        }
+        let Some(launcher) = &start.systemd_launch else {
+            return;
+        };
+        let unit = quote_shell_word(&launcher.unit);
+        let stop = format!("systemctl --user stop -- {unit}");
+        let old_status = crate::service_templates::systemd_status("systemctl --user", &unit, false);
+        for action in &mut self.actions {
+            if action.kind == "stop"
+                && action.mode == ExecutionMode::Command
+                && action.invocation.is_none()
+                && action.command == stop
+            {
+                // A stopped transient unit may already have been collected by the manager.
+                action.command = format!(
+                    r#"load=$(systemctl --user show --property=LoadState --value -- {unit})
+[ "$load" != not-found ] || exit 0
+{stop} || {{
+  code=$?
+  [ "$code" -eq 5 ] || exit "$code"
+  [ "$(systemctl --user show --property=LoadState --value -- {unit})" = not-found ] || exit "$code"
+}}"#
+                );
+            } else if action.kind == "status"
+                && action.invocation.is_none()
+                && action.command == old_status
+            {
+                action.command =
+                    crate::service_templates::systemd_status("systemctl --user", &unit, true);
+            }
+        }
+    }
+    pub(crate) fn execution_login(
+        &self,
+        host: &crate::model::Host,
+        requested: Option<&str>,
+    ) -> Result<crate::model::Host, String> {
+        let login = requested.or_else(|| self.login_by_host.get(&host.id).map(String::as_str));
+        match login {
+            Some(id) => host.login(Some(id)),
+            None => host.default_login(),
+        }
+    }
+
     pub fn execution_target<'a>(
         &self,
         snapshot: &'a crate::model::Snapshot,
@@ -270,6 +583,7 @@ impl Service {
         }
         let mut ids = std::collections::BTreeSet::new();
         for a in &self.actions {
+            a.for_execution(self.port)?;
             if let Some(invocation) = &a.invocation {
                 if invocation.render()? != a.command {
                     return Err("invalidAction".into());
@@ -286,7 +600,7 @@ impl Service {
                 || a.command.len() > 65536
                 || a.command.contains('\0')
                 || a.timeout_secs > 3600
-                || (a.timeout_secs == 0 && a.mode != ExecutionMode::Terminal)
+                || (a.timeout_secs == 0 && !a.allows_unlimited())
                 || a.success_codes.is_empty()
                 || a.success_codes.len() > 32
             {
@@ -300,6 +614,8 @@ impl Service {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Run {
+    #[serde(default)]
+    pub login_id: Option<String>,
     pub id: String,
     pub request_id: String,
     pub service_id: String,
@@ -607,8 +923,9 @@ pub async fn execute(
     manager: Arc<Manager>,
     id: String,
     cancel: CancellationToken,
-    request: Request,
+    mut request: Request,
 ) {
+    request.action.use_foreground_timeout();
     let runtime = Arc::new(Mutex::new(Runtime::default()));
     let connection = tunnel::connect(
         request.hops,
@@ -667,7 +984,8 @@ pub async fn execute(
         return;
     };
     let mut submitted = false;
-    let result = tokio::time::timeout(Duration::from_secs(request.action.timeout_secs), async {
+    let mut exited = false;
+    let result = async {
         if !(request.validate)() {
             return ("cancelled", Some("notExecuted".into()));
         }
@@ -683,44 +1001,62 @@ pub async fn execute(
         {
             return ("unknown", Some("remoteUnknown".into()));
         }
-        let mut code = None;
-        let mut signal = None;
         loop {
             match channel.wait().await {
-                Some(ChannelMsg::Success) => manager.change(&id, |r| r.phase = "running".into()),
+                Some(ChannelMsg::Success) => manager.change(&id, |r| {
+                    r.phase = if request.action.timeout_secs == 0 {
+                        "foreground-running"
+                    } else {
+                        "running"
+                    }
+                    .into();
+                }),
                 Some(ChannelMsg::Failure) => return ("failed", Some("execRejected".into())),
                 Some(ChannelMsg::Data { data }) => manager.output(&id, "stdout", &data),
                 Some(ChannelMsg::ExtendedData { data, .. }) => manager.output(&id, "stderr", &data),
                 Some(ChannelMsg::ExitStatus { exit_status }) => {
-                    code = Some(exit_status);
-                    manager.change(&id, |r| r.exit_code = code);
+                    exited = true;
+                    manager.change(&id, |r| r.exit_code = Some(exit_status));
+                    return if request.action.success_codes.contains(&exit_status) {
+                        ("succeeded", None)
+                    } else {
+                        ("failed", Some("exitCode".into()))
+                    };
                 }
                 Some(ChannelMsg::ExitSignal {
                     signal_name: exit_signal,
                     ..
                 }) => {
-                    signal = Some(format!("{exit_signal:?}"));
-                    manager.change(&id, |r| r.exit_signal = signal.clone());
+                    exited = true;
+                    manager.change(&id, |r| r.exit_signal = Some(format!("{exit_signal:?}")));
+                    return ("failed", Some("exitSignal".into()));
                 }
                 Some(ChannelMsg::Close) | None => {
-                    return if signal.is_some() {
-                        ("failed", Some("exitSignal".into()))
-                    } else if let Some(code) = code {
-                        if request.action.success_codes.contains(&code) {
-                            ("succeeded", None)
-                        } else {
-                            ("failed", Some("exitCode".into()))
-                        }
-                    } else {
-                        ("unknown", Some("remoteUnknown".into()))
-                    }
+                    return ("unknown", Some("remoteUnknown".into()));
                 }
                 _ => {}
             }
         }
-    });
-    let (phase, error) = tokio::select! {biased;_=cancel.cancelled()=>("cancelled",Some("remoteUnknown".into())),result=result=>match result {Ok(r)=>r,Err(_)=>("timedOut",Some("remoteUnknown".into()))}};
-    if phase == "cancelled" || phase == "timedOut" {
+    };
+    let (phase, error) = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => ("cancelled", Some("remoteUnknown".into())),
+        result = result => result,
+        _ = execution_deadline(request.action.timeout_secs) => ("timedOut", Some("remoteUnknown".into())),
+    };
+    if exited {
+        let _ = tokio::time::timeout(EXIT_DRAIN_TIME, async {
+            while let Some(message) = channel.wait().await {
+                match message {
+                    ChannelMsg::Data { data } => manager.output(&id, "stdout", &data),
+                    ChannelMsg::ExtendedData { data, .. } => manager.output(&id, "stderr", &data),
+                    ChannelMsg::Eof | ChannelMsg::Close => break,
+                    _ => {}
+                }
+            }
+        })
+        .await;
+    } else if submitted && (phase == "cancelled" || phase == "timedOut") {
         let _ = tokio::time::timeout(Duration::from_millis(500), channel.signal(Sig::TERM)).await;
     }
     let _ = tokio::time::timeout(Duration::from_millis(500), channel.close()).await;
@@ -780,6 +1116,7 @@ mod tests {
             action_id: "action".into(),
             service_revision: "v1".into(),
             host_id: "host".into(),
+            login_id: None,
             host_name: "host".into(),
             endpoint: "isolated".into(),
             action_label: "action".into(),
@@ -916,6 +1253,45 @@ mod tests {
         let mut json = serde_json::to_value(&service).unwrap();
         json.as_object_mut().unwrap().remove("executionHostId");
         assert!(serde_json::from_value::<Service>(json).is_ok());
+    }
+    #[test]
+    fn port_expansion_is_opt_in_and_limited_to_argument_values_and_script_source() {
+        let mut action: Action = serde_json::from_value(serde_json::json!({"id":"x","kind":"custom","label":"fixture","command":"echo {{service.port}}","confirm":true,"successCodes":[0],"timeoutSecs":5})).unwrap();
+        assert_eq!(action.resolved(None).unwrap().command, action.command);
+        action.service_port_variable = true;
+        let invocation = Invocation {
+            executable: "fixture".into(),
+            arguments: vec![CommandArgument {
+                name: "--port".into(),
+                value: Some("{{service.port}}".into()),
+            }],
+            environment: vec![EnvironmentVariable {
+                name: "LITERAL".into(),
+                value: "{{service.port}}".into(),
+            }],
+            script: None,
+        };
+        action.invocation = Some(invocation);
+        assert!(action.resolved(Some(0)).is_err());
+        let resolved = action.resolved(Some(65535)).unwrap();
+        let invocation = resolved.invocation.unwrap();
+        assert_eq!(invocation.arguments[0].value.as_deref(), Some("65535"));
+        assert_eq!(invocation.environment[0].value, "{{service.port}}");
+        assert_eq!(invocation.render().unwrap(), resolved.command);
+        let source = action.invocation.as_mut().unwrap();
+        source.arguments.clear();
+        source.executable = "sh".into();
+        source.script = Some("echo {{service.port}}".into());
+        assert_eq!(
+            action
+                .resolved(Some(1))
+                .unwrap()
+                .invocation
+                .unwrap()
+                .script
+                .as_deref(),
+            Some("echo 1")
+        );
     }
     #[test]
     fn shell_script_environment_preserves_multiline_source_and_validates_shape() {
@@ -1103,6 +1479,7 @@ mod tests {
     #[test]
     fn service_validation_rejects_unbounded_and_ambiguous_actions() {
         let mut s = Service {
+            login_by_host: Default::default(),
             direct_protocol: None,
             host_ids: vec![],
             port: None,
@@ -1118,6 +1495,8 @@ mod tests {
             revision: "".into(),
             no_local_environment: false,
             actions: vec![Action {
+                systemd_launch: None,
+                service_port_variable: false,
                 invocation: None,
                 mode: Default::default(),
                 id: "a".into(),
@@ -1131,6 +1510,8 @@ mod tests {
         };
         assert!(s.validate().is_ok());
         s.actions[0].timeout_secs = 0;
+        assert!(s.validate().is_ok());
+        s.actions[0].kind = "status".into();
         assert!(s.validate().is_err());
         s.actions[0].mode = ExecutionMode::Terminal;
         assert!(s.validate().is_ok());
@@ -1179,6 +1560,36 @@ mod tests {
         s.actions[0].command = "printf ok".into();
         s.actions.push(s.actions[0].clone());
         assert!(s.validate().is_err());
+    }
+
+    #[test]
+    fn legacy_direct_dsh_start_uses_a_foreground_timeout_in_either_mode() {
+        let mut action: Action = serde_json::from_value(serde_json::json!({
+            "id":"start", "kind":"start", "label":"start", "command":"'dsh' 'web' '--port' '13085'",
+            "timeoutSecs":60, "successCodes":[0], "confirm":false
+        }))
+        .unwrap();
+        for mode in [ExecutionMode::Command, ExecutionMode::Terminal] {
+            action.mode = mode;
+            action.timeout_secs = 60;
+            action.use_foreground_timeout();
+            assert_eq!(action.timeout_secs, 0);
+            assert_eq!(action.command, "'dsh' 'web' '--port' '13085'");
+        }
+        action.timeout_secs = 90;
+        action.use_foreground_timeout();
+        assert_eq!(action.timeout_secs, 90);
+        for unrelated in [
+            "dsh web --help",
+            "dsh web && other-command",
+            "systemd-run dsh web",
+            "dsh web\necho next",
+        ] {
+            action.command = unrelated.into();
+            action.timeout_secs = 60;
+            action.use_foreground_timeout();
+            assert_eq!(action.timeout_secs, 60);
+        }
     }
     #[test]
     fn global_output_budget_is_enforced_at_admission_after_all_jobs_are_registered() {

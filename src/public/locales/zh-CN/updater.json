@@ -47,9 +47,9 @@
   },
   "about": {
     "title": "关于",
-    "open": "关于 OriaTunnel",
-    "openWithUpdate": "关于 OriaTunnel，有可用更新",
-    "icon": "OriaTunnel 应用图标",
+    "open": "关于 OriaSSH",
+    "openWithUpdate": "关于 OriaSSH，有可用更新",
+    "icon": "OriaSSH 应用图标",
     "version": "版本 {{version}}",
     "copyright": "© {{year}} KrisLee",
     "website": "官网",

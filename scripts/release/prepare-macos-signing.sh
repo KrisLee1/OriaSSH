@@ -21,5 +21,5 @@ security list-keychains -d user -s "$keychain" /Library/Keychains/System.keychai
 security default-keychain -d user -s "$keychain"
 rm -f "$ORIA_CERTIFICATE_PATH"
 # The profile lives only in this runner's disposable keychain.
-xcrun notarytool store-credentials OriaTunnel-CI --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --keychain "$keychain" >/dev/null
-printf 'ORIATUNNEL_APPLE_TEAM_ID=%s\nORIATUNNEL_NOTARY_PROFILE=OriaTunnel-CI\n' "$APPLE_TEAM_ID" >> "$GITHUB_ENV"
+xcrun notarytool store-credentials OriaSSH-CI --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --keychain "$keychain" >/dev/null
+printf 'ORIASSH_APPLE_TEAM_ID=%s\nORIASSH_NOTARY_PROFILE=OriaSSH-CI\n' "$APPLE_TEAM_ID" >> "$GITHUB_ENV"

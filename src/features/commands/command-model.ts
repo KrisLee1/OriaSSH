@@ -3,6 +3,7 @@ import type {
   CommandRun,
   PresetAction,
   RemoteService,
+  Snapshot,
 } from "@/types";
 export const commandKinds = [
   "start",
@@ -13,6 +14,62 @@ export const commandKinds = [
   "custom",
 ] as const;
 export const commandActive = (run: CommandRun) => run.finishedAt === null;
+export function allowsUnlimitedAction(
+  action: PresetAction,
+  workflowStartId?: string | null,
+) {
+  return !action.systemdLaunch && (
+    action.mode === "terminal" ||
+    (workflowStartId !== action.id &&
+      ["start", "restart", "logs", "custom"].includes(action.kind))
+  );
+}
+
+export function serviceForwardReachableAt(
+  data: Pick<Snapshot, "services" | "rules" | "runtimes"> | undefined,
+  run: Pick<
+    CommandRun,
+    "serviceId" | "serviceRevision" | "hostId" | "startedAt"
+  >,
+  ruleId?: string | null,
+) {
+  const service = data?.services?.find(
+    (item) =>
+      item.id === run.serviceId && item.revision === run.serviceRevision,
+  );
+  if (!data || !service) return undefined;
+  let latest: number | undefined;
+  for (const rule of data.rules) {
+    if (
+      rule.kind !== "L" ||
+      rule.hostId !== run.hostId ||
+      !service.ruleIds.includes(rule.id) ||
+      (ruleId && rule.id !== ruleId)
+    )
+      continue;
+    const runtime = data.runtimes.find((item) => item.ruleId === rule.id);
+    if (
+      !runtime ||
+      runtime.status !== "listening" ||
+      runtime.configurationChanged
+    )
+      continue;
+    const route = runtime.activeRoute ?? rule;
+    const { checkedAt, method, state } = runtime.targetHealth ?? {};
+    if (
+      route.kind === "L" &&
+      route.hostId === run.hostId &&
+      (!service.port || route.targetPort === service.port) &&
+      method === "tcp-connect" &&
+      state === "reachable" &&
+      checkedAt !== undefined &&
+      checkedAt >= run.startedAt
+    ) {
+      latest = Math.max(latest ?? 0, checkedAt);
+    }
+  }
+  return latest;
+}
 export function mergeRuns(current: CommandRun[], incoming: CommandRun[]) {
   const byId = new Map(current.map((run) => [run.id, run]));
   for (const run of incoming)
@@ -62,30 +119,6 @@ export function newService(_hostId: string, ruleId?: string): RemoteService {
     noLocalEnvironment: true,
     actions: [],
   };
-}
-export function copyService(source: RemoteService): RemoteService {
-  const copy = structuredClone(source);
-  const ids = new Map(
-    copy.actions.map((action) => [action.id, crypto.randomUUID()]),
-  );
-  copy.id = "";
-  copy.revision = "";
-  copy.executionHostId = "";
-  copy.hostIds = [];
-  copy.ruleIds = [];
-  copy.actions = copy.actions.map((action) => ({
-    ...action,
-    id: ids.get(action.id)!,
-  }));
-  if (copy.control) {
-    if (copy.control.statusProbe)
-      copy.control.statusProbe.actionId = ids.get(
-        copy.control.statusProbe.actionId,
-      )!;
-    if (copy.control.startActionId)
-      copy.control.startActionId = ids.get(copy.control.startActionId)!;
-  }
-  return copy;
 }
 // Separate decoders preserve partial UTF-8 bytes without mixing stderr into stdout.
 export class OutputDecoder {

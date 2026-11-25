@@ -93,7 +93,7 @@
     "showDescription": "查看说明"
   },
   "initialPreferences": {
-    "title": "欢迎使用 OriaTunnel",
+    "title": "欢迎使用 OriaSSH",
     "description": "按你的习惯设置外观，之后也可以在设置中调整。",
     "done": "开始使用",
     "saveFailed": "无法保存首次设置状态，下次启动时会再次显示。"

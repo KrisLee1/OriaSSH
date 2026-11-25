@@ -23,6 +23,7 @@ export function mergeSnapshot(before: Snapshot, next: Snapshot): Snapshot {
   return {
     ...next,
     hosts: shareItems(before.hosts, next.hosts, "id"),
+    loginCredentials: next.loginCredentials && shareItems(before.loginCredentials, next.loginCredentials, "id"),
     rules: shareItems(before.rules, next.rules, "id"),
     services: next.services && shareItems(before.services, next.services, "id"),
     runtimes: shareItems(before.runtimes, next.runtimes, "ruleId"),

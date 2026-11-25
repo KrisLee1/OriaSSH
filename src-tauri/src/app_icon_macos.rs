@@ -133,7 +133,7 @@ mod tests {
         std::fs::create_dir_all(contents.join("MacOS")).unwrap();
         std::fs::copy("/usr/bin/true", contents.join("MacOS/fixture")).unwrap();
         std::fs::write(contents.join("Info.plist"),
-            r#"<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>com.oria-tunnel.icon-fixture</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleExecutable</key><string>fixture</string></dict></plist>"#).unwrap();
+            r#"<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>com.oria-ssh.icon-fixture</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleExecutable</key><string>fixture</string></dict></plist>"#).unwrap();
         assert!(std::process::Command::new("/usr/bin/codesign")
             .args(["--force", "--sign", "-"])
             .arg(&bundle)

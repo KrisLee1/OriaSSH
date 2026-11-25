@@ -4,7 +4,7 @@ export type RenderMode = "quality" | "smooth";
 
 const cursorKey = "oria-tunnel.vnc.hide-local-cursor.v1";
 const modeKey = "oria-tunnel.vnc.render-mode.v1";
-const changed = "oria-tunnel:vnc-display-preferences";
+const changed = "oria-ssh:vnc-display-preferences";
 
 function subscribe(notify: () => void) {
   window.addEventListener("storage", notify);

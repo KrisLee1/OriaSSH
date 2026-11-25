@@ -5,7 +5,7 @@ import CoreGraphics
 let args = CommandLine.arguments
 guard [4, 5, 6].contains(args.count), let pid = Int32(args[1]),
       let app = NSRunningApplication(processIdentifier: pid),
-      app.executableURL?.lastPathComponent == "oria-tunnel",
+      app.executableURL?.lastPathComponent == "oria-ssh",
       let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]],
       let window = windows.first(where: {
           ($0[kCGWindowOwnerPID as String] as? Int32) == pid && ($0[kCGWindowLayer as String] as? Int) == 0

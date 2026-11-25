@@ -17,6 +17,7 @@ import {
   Ellipsis,
   Folder,
   File,
+  Terminal as TerminalIcon,
 } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import {
@@ -28,6 +29,8 @@ import {
 import { TerminalPath, type DirectoryNavigation } from "./terminal-path";
 import {
   completionWord,
+  completionProfile,
+  type CompletionProfile,
   commandTranscript,
   exceedsPreviewHeight,
   insertCandidate,
@@ -36,6 +39,12 @@ import {
   type ShellQuery,
   type TerminalCopyText,
 } from "./shell-editor";
+import {
+  completionInputLimit,
+  completionListLimit,
+  completionPlan,
+} from "./command-completion";
+import { useShellMatches } from "./use-shell-matches";
 import { needsPasteReview, terminalShortcutAction } from "./terminal-model";
 
 export function CommandHeader({
@@ -253,7 +262,17 @@ export function CommandHeader({
   );
 }
 
+function startsWith(value: string, prefix: string, powershell = false) {
+  return (powershell ? value.toLowerCase() : value).startsWith(prefix);
+}
+
 type Draft = { line: string; cursor: number };
+type Candidate = Draft & { label: string; kind?: "syntax" | "folder" | "file" };
+const wholeCommand = (line: string): Candidate => ({
+  line,
+  cursor: line.length,
+  label: line,
+});
 export function CommandEditor({
   query,
   history,
@@ -264,6 +283,7 @@ export function CommandEditor({
   visible,
   cwd,
   powershell,
+  profile,
   shortcut,
 }: {
   query: ShellQuery;
@@ -275,6 +295,7 @@ export function CommandEditor({
   visible: boolean;
   cwd: string;
   powershell?: boolean;
+  profile?: CompletionProfile;
   shortcut: (
     action: NonNullable<ReturnType<typeof terminalShortcutAction>>,
   ) => void;
@@ -288,11 +309,14 @@ export function CommandEditor({
   const [saveDraft, setSaveDraft] = useState<string | null>(null);
   const [index, setIndex] = useState(0);
   const [savedChoice, setSavedChoice] = useState<string | null>(null);
-  const [remote, setRemote] = useState<string[]>([]);
   const [composing, setComposing] = useState(false);
   const matches = useMemo(
     () =>
-      manualMode || dismissed || composing || !library
+      manualMode ||
+      dismissed ||
+      composing ||
+      !library ||
+      line.length > completionInputLimit
         ? []
         : matchingCommands(library.entries, line),
     [manualMode, dismissed, composing, library?.entries, line],
@@ -300,95 +324,107 @@ export function CommandEditor({
   const mode = manualMode ?? (matches.length ? "saved" : null);
   const original = useRef<Draft>({ line: "", cursor: 0 });
   const restore = useRef<number | null>(null);
-  const word = completionWord(line, cursor, powershell);
   const listId = useId();
   const list = useRef<HTMLDivElement>(null);
   const anchor = useRef<HTMLSpanElement>(null);
   const [placement, setPlacement] = useState({ left: 0, top: 20, up: false });
-  // Native editing gives the platform ownership of grapheme selection and IME.
-  // Mirror the draft and its UTF-8 byte offset into the current shell prompt.
-  useEffect(() => {
-    if (composing || powershell) return;
-    const timer = setTimeout(() => {
-      const point = new TextEncoder().encode(line.slice(0, cursor)).length;
-      void query("edit", point + " " + line).catch(() => {});
-    }, 40);
-    return () => clearTimeout(timer);
-  }, [line, cursor, query, composing, powershell]);
-  useEffect(() => {
-    let live = true;
-    setRemote([]);
-    if (
-      (!word.prefix && !mode) ||
-      mode === "history" ||
-      mode === "saved" ||
-      composing
-    )
-      return;
-    const timer = setTimeout(
-      () => {
-        void query(word.kind, word.prefix).then(
-          (result) => {
-            if (live) {
-              const names = [...new Set(result)];
-              if (powershell && word.kind === "commands")
-                names.sort((a, b) => a.length - b.length || a.localeCompare(b));
-              else names.sort();
-              setRemote(names);
-            }
-          },
-          () => {},
-        );
-      },
-      mode ? 0 : 65,
-    );
-    return () => {
-      live = false;
-      clearTimeout(timer);
-    };
-  }, [query, line, cursor, cwd, mode, composing, powershell]);
+  const explicit = mode === "complete";
+  const completing =
+    visible &&
+    !composing &&
+    (explicit || (!mode && !dismissed)) &&
+    line.length <= completionInputLimit;
+  const plan = useMemo(
+    () =>
+      completing
+        ? completionPlan(
+            completionWord(line, cursor, powershell),
+            profile ?? completionProfile(powershell),
+            explicit,
+          )
+        : undefined,
+    [completing, cursor, explicit, line, powershell, profile],
+  );
+  const remote = useShellMatches(
+    query,
+    cwd,
+    plan?.query,
+    plan?.word.prefix ?? "",
+    explicit,
+    !!powershell,
+  );
   const prefix = mode === "history" ? original.current.line : line;
-  const startsWith = (value: string, typed: string) =>
-    powershell
-      ? value.toLowerCase().startsWith(typed.toLowerCase())
-      : value.startsWith(typed);
-  const recent = history.filter((value) => startsWith(value, prefix));
-  const candidates =
-    mode === "saved"
-      ? matches.map((entry) => ({
-          line: entry.command,
-          cursor: entry.command.length,
-          label: entry.command,
-        }))
-      : mode === "history"
-        ? recent.map((value) => ({
-            line: value,
-            cursor: value.length,
-            label: value,
-          }))
-        : [
-            ...(line && cursor === line.length
-              ? [
-                  ...recent,
-                  ...(library?.entries ?? [])
-                    .map((e) => e.command)
-                    .filter((value) => startsWith(value, line)),
-                ]
-                  .filter((v) => v !== line)
-                  .map((value) => ({
-                    line: value,
-                    cursor: value.length,
-                    label: value,
-                  }))
-              : []),
-            ...remote.map((name) => ({
-              ...insertCandidate(line, word, name),
-              label: name,
-            })),
-          ].filter(
-            (candidate, i, all) =>
-              all.findIndex((other) => other.line === candidate.line) === i,
-          );
+  const recent = useMemo(() => {
+    if (prefix.length > completionInputLimit) return [];
+    const typed = powershell ? prefix.toLowerCase() : prefix;
+    return history.filter((value) => startsWith(value, typed, powershell));
+  }, [history, powershell, prefix]);
+  const candidates = useMemo(() => {
+    if (mode === "saved")
+      return matches.map((entry) => wholeCommand(entry.command));
+    if (mode === "history") return recent.map(wholeCommand);
+    if (!plan) return [];
+
+    const { word, names, leader } = plan;
+    const result: Candidate[] = [];
+    const seen = new Set([powershell ? line.toLowerCase() : line]);
+    const append = (candidate: Candidate) => {
+      const key = powershell ? candidate.line.toLowerCase() : candidate.line;
+      if (seen.has(key)) return;
+      seen.add(key);
+      result.push(candidate);
+    };
+    const appendHistory = () => {
+      if (!line || cursor !== line.length || word.comment) return;
+      const typed = powershell ? line.toLowerCase() : line;
+      for (const value of recent) {
+        if (result.length >= completionListLimit) return;
+        append(wholeCommand(value));
+      }
+      for (const entry of library?.entries ?? []) {
+        if (result.length >= completionListLimit) return;
+        if (startsWith(entry.command, typed, powershell))
+          append(wholeCommand(entry.command));
+      }
+    };
+    if (!explicit && word.command) appendHistory();
+    const syntaxWord = { ...word, prefix: "", kind: "commands" as const };
+    const syntaxLimit = word.command && !word.prefix ? 32 : completionListLimit;
+    for (const name of names) {
+      if (result.length >= syntaxLimit) break;
+      append({
+        ...insertCandidate(line, syntaxWord, name, leader),
+        label: name,
+        kind: "syntax",
+      });
+    }
+    for (const name of remote) {
+      if (result.length >= completionListLimit) break;
+      append({
+        ...insertCandidate(line, word, name, leader),
+        label: name,
+        kind:
+          plan.query === "commands"
+            ? "syntax"
+            : name.endsWith("/") || (powershell && name.endsWith("\\"))
+              ? "folder"
+              : "file",
+      });
+    }
+    appendHistory();
+    return result;
+  }, [
+    cursor,
+    explicit,
+    library?.entries,
+    line,
+    matches,
+    mode,
+    plan,
+    powershell,
+    recent,
+    remote,
+  ]);
   const historyOpen = mode === "history";
   const rows = historyOpen ? [...candidates].reverse() : candidates;
   const savedIndex = matches.findIndex((entry) => entry.id === savedChoice);
@@ -397,19 +433,21 @@ export function CommandEditor({
       ? savedIndex
       : historyOpen
         ? rows.length - 1 - index
-        : index;
-  const ghostIndex = candidates.findIndex(
-    (item) => item.line.length > line.length && startsWith(item.line, line),
-  );
+        : Math.min(index, candidates.length - 1);
+  const ghostIndex =
+    plan && line && cursor === line.length && plan.word.prefix !== "-"
+      ? candidates.findIndex(
+          (item) =>
+            item.line.length > line.length &&
+            startsWith(
+              item.line,
+              powershell ? line.toLowerCase() : line,
+              powershell,
+            ),
+        )
+      : -1;
   const ghost =
-    !composing &&
-    mode !== "history" &&
-    mode !== "saved" &&
-    cursor === line.length &&
-    !(powershell && dismissed) &&
-    ghostIndex >= 0
-      ? candidates[ghostIndex].line.slice(line.length)
-      : "";
+    ghostIndex >= 0 ? candidates[ghostIndex].line.slice(line.length) : "";
   const apply = (draft: Draft) => {
     setSavedChoice(null);
     restore.current = draft.cursor;
@@ -466,7 +504,10 @@ export function CommandEditor({
     const pane = inputRef.current?.closest(".terminal-session-panel");
     if (
       visible &&
-      !(pane?.contains(focused) && focused?.matches("button,input,[role=combobox]")) &&
+      !(
+        pane?.contains(focused) &&
+        focused?.matches("button,input,[role=combobox]")
+      ) &&
       !window.getSelection()?.toString() &&
       !focused?.closest(".shell-block pre") &&
       !document.querySelector('[role="dialog"][data-open]')
@@ -514,7 +555,7 @@ export function CommandEditor({
         <textarea
           ref={inputRef}
           aria-label={t("input")}
-          aria-autocomplete="list"
+          aria-autocomplete="both"
           aria-controls={mode && candidates.length ? listId : undefined}
           aria-activedescendant={
             mode && rows[selectedRow] ? listId + "-" + selectedRow : undefined
@@ -646,7 +687,7 @@ export function CommandEditor({
                 }
                 break;
               case "Escape":
-                if (mode) {
+                if (mode || ghost) {
                   e.preventDefault();
                   setDismissed(true);
                   if (mode === "history") apply(original.current);
@@ -658,7 +699,7 @@ export function CommandEditor({
                 e.preventDefault();
                 if (mode === "saved" && savedIndex >= 0) accept(savedIndex);
                 else if (mode && mode !== "saved" && candidates.length)
-                  accept(index);
+                  accept(historyOpen ? index : selectedRow);
                 else submit(line);
                 break;
             }
@@ -700,18 +741,18 @@ export function CommandEditor({
                 key={mode === "saved" ? matches[i].id : candidate.line}
                 id={listId + "-" + i}
                 role="option"
+                tabIndex={-1}
                 aria-selected={i === selectedRow}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => accept(historyOpen ? rows.length - 1 - i : i)}
               >
-                {mode === "complete" &&
-                  word.kind !== "commands" &&
-                  (candidate.label.endsWith("/") ||
-                  (powershell && candidate.label.endsWith("\\")) ? (
-                    <Folder size={14} />
-                  ) : (
-                    <File size={14} />
-                  ))}
+                {candidate.kind === "folder" ? (
+                  <Folder size={14} />
+                ) : candidate.kind === "file" ? (
+                  <File size={14} />
+                ) : (
+                  <TerminalIcon size={14} />
+                )}
                 <span title={candidate.label}>{candidate.label}</span>
               </button>
             ))}

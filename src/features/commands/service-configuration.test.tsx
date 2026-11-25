@@ -3,11 +3,14 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { mkdtempSync, writeFileSync, chmodSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawnSync, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import i18n from "@/i18n";
 import { posixShell } from "@/test/posix-shell";
 import {
   renderInvocation,
+  displayInvocation,
+  readableActionPreview,
+  readableShellSource,
   normalizeInvocation,
   CommandInvocationEditor,
   CommandEnvironmentEditor,
@@ -17,6 +20,14 @@ import {
   isStructuredCommand,
   switchActionFormat,
 } from "./command-invocation";
+import {
+  completedPortAlias,
+  editPortText,
+  portText,
+  servicePortToken,
+  textEdit,
+  variableOffer,
+} from "./command-variable-model";
 import {
   builtinServiceTemplates,
   applyLaunchTemplate,
@@ -31,13 +42,13 @@ import {
 } from "./service-template-catalog";
 import {
   ServiceEditor,
-  ServicesPage,
   PresetCommandProvider,
-  HostServices,
+  HostServices, AddHostService,
 } from "./preset-commands";
 import { RuleEditor } from "@/features/tunnels/rule-editor";
 import { emptyHost, emptyRule } from "@/features/tunnels/rule-model";
 import { newService } from "./command-model";
+import { manageServiceWithSystemd, restoreSystemdCommand, systemdService, systemdUnit } from "./systemd-service";
 import type { RemoteService, Snapshot, ServiceTemplate } from "@/types";
 import catalog from "@/features/tunnels/connection-icon-catalog.json";
 import categoryIds from "./service-category-ids.json";
@@ -103,90 +114,75 @@ function base(resource: string): ServiceTemplate {
   };
 }
 describe("service configuration", () => {
-  it("keeps host services icon-only with scroll area, disclosure and a separate Boxes manager", () => {
+  it("lists host services with their own addresses and controls, independently of their forwards", () => {
+    const rules = [
+      ...["one", "two", "legacy"].map((id) => ({ ...emptyRule(host.id), id })),
+      { ...emptyRule(host.id), id: "remote", kind: "R" as const },
+      { ...emptyRule(host.id), id: "proxy", kind: "D" as const },
+    ];
+    const services = [
+      { ...service, port: 8080, ruleIds: ["one", "two", "proxy"] },
+      { ...newService(host.id), id: "legacy-profile", name: "Legacy service", hostIds: undefined, ruleIds: ["legacy"] },
+      { ...newService(host.id), id: "desktop", name: "VNC", port: 5900, directProtocol: "vnc" as const },
+      { ...newService("other"), id: "other", name: "Other host only" },
+    ];
     const html = renderToStaticMarkup(
-      <PresetCommandProvider
-        data={{
-          ...snapshot,
-          services: [service, { ...service, id: "second" }],
-        }}
-        onSnapshot={() => {}}
-      >
-        <HostServices hostId="host" />
+      <PresetCommandProvider data={{ ...snapshot, services, rules }} onSnapshot={() => {}}>
+        <AddHostService hostId={host.id} />
+        <HostServices host={{ ...host, address: "::1" }} canLink />
       </PresetCommandProvider>,
     );
-    expect(html).toContain("host-service-scroll");
-    expect(html).toContain('aria-expanded="false"');
-    expect(html).toContain("aria-controls=");
-    expect(html).toContain("lucide-boxes");
-    expect(html.indexOf("service-command-icons")).toBeLessThan(
-      html.indexOf("host-service-tools"),
-    );
-    expect(html.indexOf("host-service-tools")).toBeLessThan(
-      html.indexOf("lucide-boxes"),
-    );
-    expect(html).not.toContain('class="service-name-text"');
+    const group = html.match(/<section class="canvas-service"[^>]*aria-label="Model service"[^>]*>([\s\S]*?)<\/section>/)?.[1];
+    expect(html).toContain(`<h3 class="host-card-group-title">${i18n.t("services", { ns: "commands" })}</h3>`);
+    expect(group).not.toMatch(/class="status(?:\s|")/);
+    expect(group).toContain("canvas-service-path");
+    expect(group).toContain("canvas-service-actions");
+    expect(group).toContain("[::1]:8080");
+    expect(group).not.toContain("lucide-ellipsis");
+    expect(group).toContain(`aria-label="${i18n.t("details", { ns: "tunnel" })} Model service"`);
+    expect(group).toContain("Launch");
+    expect(group).toContain(`aria-label="${i18n.t("edit", { ns: "commands" })} Model service"`);
+    expect(group).toContain(`aria-label="${i18n.t("delete", { ns: "commands" })} Model service"`);
+    expect(html).not.toMatch(/data-(canvas-rules|link-rule|rule-endpoint)=/);
+    expect(html).toContain('data-canvas-service="legacy-profile"');
+    const desktop = html.match(/<section class="canvas-service"[^>]*aria-label="VNC"[^>]*>([\s\S]*?)<\/section>/)?.[1];
+    expect(desktop).not.toContain(i18n.t("serviceUnbound", { ns: "commands" }));
+    expect(desktop).not.toMatch(/class="status(?:\s|")/);
+    expect(desktop).toMatch(/class="canvas-path-access"><span[^>]*>VNC<\/span><span class="service-open-action/);
+    expect(desktop).toMatch(/class="canvas-path-route"><code[^>]*>\[::1\]:5900<\/code>/);
+    expect(desktop).toContain(`aria-label="${i18n.t("openNamedService", { ns: "commands", name: "VNC" })}"`);
+    expect(html).not.toContain("Other host only");
+    expect(html).toContain(i18n.t("addService", { ns: "commands" }));
   });
-  it("renders host groups, repeats shared definitions and isolates unassigned services", () => {
-    const shared = { ...service, hostIds: ["second", "host"] };
+  it("offers creation inside the host without a service manager or assignment picker", () => {
     const html = renderToStaticMarkup(
-      <PresetCommandProvider
-        data={{
-          ...snapshot,
-          hosts: [host, { ...host, id: "second", name: "second-host" }],
-          services: [
-            shared,
-            {
-              ...service,
-              id: "unbound",
-              name: "unbound-service",
-              hostIds: [],
-              ruleIds: [],
-            },
-          ],
-        }}
-        onSnapshot={() => {}}
-        page
-      >
-        <ServicesPage />
+      <PresetCommandProvider data={{ ...snapshot, services: [] }} onSnapshot={() => {}}>
+        <AddHostService hostId={host.id} />
+        <HostServices host={host} canLink />
       </PresetCommandProvider>,
     );
-    const headings = [...html.matchAll(/<h2[^>]*>([\s\S]*?)<\/h2>/g)].map(
-      (match) => match[1],
-    );
-    expect(headings.findIndex((h) => h.includes("fixture"))).toBeLessThan(
-      headings.findIndex((h) => h.includes("second-host")),
-    );
-    expect(headings.at(-1)).toContain(
-      i18n.t("unassignedHost", { ns: "commands" }),
-    );
-    expect(html.match(/title="Model service"/g)).toHaveLength(2);
-    expect(html.match(/title="unbound-service"/g)).toHaveLength(1);
+    expect(html).toContain(i18n.t("addService", { ns: "commands" }));
+    expect(html).not.toContain(i18n.t("manageServices", { ns: "commands" }));
+    expect(html).not.toContain("host-card-group-title");
   });
-  it("keeps disabled state beside the service name, uses forwarding selection placement and direct permission actions", () => {
-    const disabled = { ...service, executionEnabled: false };
+  it("uses the linked L path inside the service card without a second address or action row", () => {
+    const serviceHost = { ...host, address: "lab.example" };
+    const rule = { ...emptyRule(host.id), id: "linked", name: "Forward", targetPort: 8080 };
+    const profile = { ...service, port: 8080, ruleIds: [rule.id] };
     const html = renderToStaticMarkup(
-      <PresetCommandProvider
-        data={{ ...snapshot, services: [disabled] }}
-        onSnapshot={() => {}}
-        page
-      >
-        <ServicesPage />
+      <PresetCommandProvider data={{ ...snapshot, services: [profile], rules: [rule] }} onSnapshot={() => {}}>
+        <HostServices host={serviceHost} canLink forwardsFor={() => [rule]}
+          forwardControls={() => ({ traffic: "↑ 0 B　↓ 0 B", open: null })} />
       </PresetCommandProvider>,
     );
-    expect(html).toContain('class="rule-select service-select"');
-    const heading = html.match(/<h3[^>]*>[\s\S]*?<\/h3>/)?.[0] || "";
-    expect(heading).toContain("Model service");
-    expect(heading).toContain(i18n.t("sharing.disabled", { ns: "commands" }));
-    expect(heading.indexOf("Model service")).toBeLessThan(
-      heading.indexOf(i18n.t("sharing.disabled", { ns: "commands" })),
-    );
-    expect(html).toContain(
-      `${i18n.t("sharing.enableReview", { ns: "commands" })} Model service`,
-    );
-    expect(html).not.toContain("lucide-ellipsis");
-    expect(html).not.toContain(i18n.t("sharing.export", { ns: "commands" }));
-    expect(html).toContain(i18n.t("batch.exportAll", { ns: "commands" }));
+    expect(html).toContain('data-canvas-rules="linked"');
+    expect(html).toContain('data-rule-endpoint="linked"');
+    expect(html).toContain('data-edit-port="linked"');
+    expect(html).toContain("↑ 0 B　↓ 0 B");
+    expect(html).toContain("127.0.0.1:8080");
+    expect(html).not.toContain(`${serviceHost.address}:8080`);
+    expect(html).not.toContain('class="host-card-rule"');
+    expect(html).not.toContain('class="rule-actions');
   });
   it("groups services by service category rather than command kinds and honors explicit choices", () => {
     expect(categoryIds).toEqual([...serviceTemplateCategories]);
@@ -267,9 +263,41 @@ describe("service configuration", () => {
       expect(html).toContain(
         i18n.t("builder.environmentAdd", { ns: "commands" }),
       );
-      const textarea = html.match(/<textarea[^>]*>/)?.[0] || "";
-      expect(/readonly/i.test(textarea)).toBe(isStructuredCommand(action));
+      if (isStructuredCommand(action)) {
+        expect(html).toContain("service-command-preview");
+        expect(html).not.toContain("<textarea");
+      } else {
+        expect(html).toMatch(/<textarea[^>]*required/);
+      }
     }
+  });
+  it("restores the original arguments after an unchanged script round trip", () => {
+    const invocation = {
+      executable: "dsh",
+      arguments: [
+        { name: "", value: "web" },
+        { name: "--port", value: servicePortToken },
+      ],
+      environment: [{ name: "MODE", value: "original" }],
+    };
+    const action = {
+      ...service.actions[0],
+      invocation,
+      command: renderInvocation(invocation),
+      servicePortVariable: true,
+    };
+    const script = switchActionFormat(action, "script");
+    const environment = [{ name: "MODE", value: "edited" }];
+    const updated = editActionEnvironment(script, environment);
+    const restored = switchActionFormat(updated, "command", invocation);
+    expect(restored.invocation).toEqual({ ...invocation, environment });
+    expect(restored.command).toBe(renderInvocation({ ...invocation, environment }));
+    expect(restored.servicePortVariable).toBe(true);
+
+    const edited = editActionScript(script, "dsh web && printf 'ready'");
+    const converted = switchActionFormat(edited, "command", invocation);
+    expect(converted.invocation?.executable).toBe("sh");
+    expect(actionScript(switchActionFormat(converted, "script"))).toBe(actionScript(edited));
   });
   it("passes explicit environment values literally, including empty values, without changing the parent environment", () => {
     const literal = "a' b;$(printf UNSAFE)`id` $HOME 中文";
@@ -303,45 +331,18 @@ describe("service configuration", () => {
     );
     expect(html).toContain('pattern="[A-Za-z_][A-Za-z0-9_]*"');
   });
-  it("forwards recipe environment through systemd-run setenv before the executable separator", () => {
-    const dir = mkdtempSync(join(tmpdir(), "oria-env-stub-"));
-    try {
-      const stub = join(dir, "systemd-run");
-      writeFileSync(stub, '#!/bin/sh\nprintf "%s\\0" "$@"\n');
-      chmodSync(stub, 0o700);
-      const preset = builtinServiceTemplates.find(
-        (preset) => preset.id === "dsh-systemd",
-      )!;
-      const result = applyLaunchTemplate(base("oria-dsh.service"), preset, {
-        ...preset.launch!,
-        environment: [
-          { name: "CUDA_VISIBLE_DEVICES", value: "0,1" },
-          { name: "LITERAL", value: "$HOME ' 中文" },
-        ],
-      });
-      // This executable is consumed by a POSIX shell, including Git's shell on Windows.
-      const invocation = {
-        ...result.actions[0].invocation!,
-        executable: stub.replaceAll("\\", "/"),
-      };
-      const args = execFileSync(posixShell, [
-        "-c",
-        renderInvocation(invocation),
-      ])
-        .toString()
-        .split("\0")
-        .slice(0, -1);
-      expect(args.slice(0, 2)).toEqual([
-        "--setenv=CUDA_VISIBLE_DEVICES=0,1",
-        "--setenv=LITERAL=$HOME ' 中文",
-      ]);
-      expect(args.indexOf("--setenv=CUDA_VISIBLE_DEVICES=0,1")).toBeLessThan(
-        args.indexOf("--"),
-      );
-      expect(args[args.indexOf("--") + 1]).toBe("dsh");
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+  it("keeps managed recipe environment in the original structured command", () => {
+    const preset = builtinServiceTemplates.find((preset) => preset.id === "dsh-systemd")!;
+    const invocation = {
+      ...preset.launch!,
+      environment: [
+        { name: "CUDA_VISIBLE_DEVICES", value: "0,1" },
+        { name: "LITERAL", value: "$HOME ' 中文" },
+      ],
+    };
+    const result = applyLaunchTemplate(base("oria-dsh.service"), preset, invocation);
+    expect(result.actions[0].invocation).toEqual(invocation);
+    expect(result.actions[0].command).toBe(renderInvocation(invocation));
   });
   it("omits blank parameter values and unused rows while keeping literal nonempty values", () => {
     const invocation = {
@@ -371,6 +372,48 @@ describe("service configuration", () => {
     expect(inputs.every((input) => !/\sdisabled(?:=|\s|>)/.test(input))).toBe(
       true,
     );
+  });
+  it("renders a readable legacy shell wrapper without changing the executable representation", () => {
+    const body = `'dsh' 'web' '--port' '13081'${servicePortToken}`;
+    const invocation = {
+      executable: "sh",
+      arguments: [{ name: "", value: "-c" }, { name: "", value: body }],
+    };
+    const canonical = renderInvocation(invocation);
+    expect(readableShellSource(body, true)).toBe(`dsh web --port 13081${servicePortToken}`);
+    expect(displayInvocation(invocation, true).text).toBe(`sh -c 'dsh web --port 13081${servicePortToken}'`);
+    expect(displayInvocation({ executable: "dsh", arguments: [{ name: "", value: "a b'c" }] }, false).text)
+      .toBe(`dsh 'a b'"'"'c'`);
+    expect(readableShellSource("'printf' '$HOME' && echo x", false)).toBe("'printf' '$HOME' && echo x");
+    expect(invocation.arguments[1].value).toBe(body);
+    expect(renderInvocation(invocation)).toBe(canonical);
+  });
+  it("keeps equal literal numbers distinct from a port token and respects escaped dollars", () => {
+    const view = portText(`6300${servicePortToken}`, "6300");
+    const edit = textEdit(view.text, "6300", 0, { start: 0, end: 4 });
+    expect(editPortText(view, edit, edit.inserted)).toBe(servicePortToken);
+    expect(editPortText(view, { start: 5, end: 6 }, "7")).toBe("63007");
+    expect(variableOffer("$", 1)).toEqual({ start: 0, end: 1 });
+    expect(variableOffer("$HOME", 5)).toBeNull();
+    expect(variableOffer("$$", 2)).toBeNull();
+    expect(completedPortAlias("=\${PORT}", 8)).toBe(1);
+    expect(completedPortAlias("\\\${PORT}", 8)).toBeNull();
+  });
+  it("keeps required argument quotes and environment data in the resolved execution preview", () => {
+    const invocation = {
+      executable: "dsh",
+      arguments: [
+        { name: "", value: "web" },
+        { name: "--port", value: "13081" },
+        { name: "--title", value: "two words" },
+      ],
+      environment: [{ name: "MODE", value: "local" }],
+    };
+    const command = renderInvocation(invocation);
+    const action = { ...service.actions[0], invocation, command };
+    expect(readableActionPreview(action, command)).toBe("MODE=local dsh web --port 13081 --title 'two words'");
+    expect(readableActionPreview(action, "printf '%s' \"$MODE\"\n")).toBe("printf '%s' \"$MODE\"\n");
+    expect(renderInvocation(invocation)).toBe(command);
   });
   it("groups every recipe once and searches names and localized categories without empty groups", () => {
     const labels = Object.fromEntries(
@@ -481,7 +524,7 @@ describe("service configuration", () => {
         expect(result.color).toMatch(/^#[0-9a-f]{6}$/i);
         expect(result.icon).toEqual({ kind: "builtin", value: template.icon });
         expect(result.actions.length).toBeGreaterThan(0);
-        expect(result.control.statusProbe).toBeNull();
+        if (template.id !== "vnc") expect(result.control.statusProbe).toBeNull();
         expect(
           result.actions.map((action) => action.command).join("\n"),
         ).not.toMatch(/systemctl|systemd-run|journalctl/);
@@ -522,7 +565,7 @@ describe("service configuration", () => {
     result.name = "Custom service";
     result.actions[0].invocation!.arguments[0].name = "--modified";
     result.control!.statusProbe!.runningCodes.push(7);
-    expect(template.actions[0].invocation!.arguments[0].name).toBe("--user");
+    expect(template.actions[0].invocation!.arguments[0].name).toBe("");
     expect(template.control.statusProbe!.runningCodes).toEqual([0]);
   });
   it("replaces stale decoration and commands when importing a generic service template", () => {
@@ -595,7 +638,13 @@ describe("service configuration", () => {
         expect(result.actions.map((a) => a.command).join("\n")).not.toMatch(
           /systemctl|systemd-run|journalctl|pkill|killall|nohup/,
         );
-        expect(result.control.statusProbe).toBeNull();
+        if (preset.id === "vnc") {
+          expect(result.control.statusProbe).toMatchObject({
+            actionId: result.actions.find(a => a.kind === "status")!.id, mode: "vncSessions",
+          });
+          expect(result.control.checkAfterActions).toBe(true);
+          expect(result.port).toBe(5901);
+        } else expect(result.control.statusProbe).toBeNull();
         expect(result.control.healthProbe).toBeNull();
         const start = result.actions.find((a) => a.kind === "start")!;
         expect(result.control.startActionId).toBe(
@@ -616,9 +665,9 @@ describe("service configuration", () => {
       expect(result.control.statusProbe?.actionId).toBe(result.actions[3].id);
       if (preset.launch) {
         expect(preset.id).toMatch(/-systemd$/);
-        expect(result.actions[0].invocation?.executable).toBe("systemd-run");
-        expect(result.actions[0].command).toContain("'--collect'");
-        expect(result.actions[0].command).not.toContain("--expand-environment");
+        expect(result.actions[0].invocation).toEqual(preset.launch);
+        expect(result.actions[0].systemdLaunch).toEqual({ unit: before.resource, mode: "transient" });
+        expect(result.actions[2].systemdLaunch).toEqual(result.actions[0].systemdLaunch);
         expect(result.actions[3].command).toContain(
           '[ "$load" != not-found ] || exit 3',
         );
@@ -633,64 +682,83 @@ describe("service configuration", () => {
     }
     execFileSync(posixShell, ["-n"], { input: scripts.join("\n") });
   });
-  it("handles a collected transient unit even when systemctl returns an error with not-found", () => {
-    const dir = mkdtempSync(join(tmpdir(), "oria-service-stub-"));
-    try {
-      for (const [name, script] of Object.entries({
-        systemctl:
-          '#!/bin/sh\nprintf "%s\\n" "$STUB_LOAD"\nexit "$STUB_CODE"\n',
-        "systemd-run": '#!/bin/sh\nprintf "%s\\n" "LAUNCH" "$@"\n',
-      })) {
-        const file = join(dir, name);
-        writeFileSync(file, script);
-        chmodSync(file, 0o700);
-      }
-      const preset = builtinServiceTemplates.find(
-        (p) => p.id === "dsh-systemd",
-      )!;
-      const result = applyLaunchTemplate(
-        base("oria-dsh.service"),
-        preset,
-        preset.launch,
-      );
-      const run = (kind: string, load: string, code: string) =>
-        spawnSync(
-          posixShell,
-          ["-c", result.actions.find((a) => a.kind === kind)!.command],
-          {
-            encoding: "utf8",
-            env: { PATH: dir, STUB_LOAD: load, STUB_CODE: code },
-          },
-        );
-      expect(run("status", "not-found", "1").status).toBe(3);
-      const restarted = run("restart", "not-found", "1");
-      expect(restarted.status).toBe(0);
-      expect(restarted.stdout).toContain(
-        "LAUNCH\n--user\n--unit\noria-dsh.service",
-      );
-      expect(run("status", "", "1").status).toBe(5);
-      expect(run("restart", "", "1").status).toBe(5);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  }, 30_000);
-  it("escapes dollar signs for the service manager without requiring systemd 254", () => {
-    const preset = builtinServiceTemplates.find((p) => p.id === "dsh-systemd")!;
-    const result = applyLaunchTemplate(base("oria-dsh.service"), preset, {
+  it.each([`oriatunnel-${service.id}`, systemdUnit(service.id)])("recovers the editable start command for %s", (unitName) => {
+    const unit = `${unitName}.service`;
+    const template = base(unit);
+    template.actions.find((a) => a.kind === "stop")!.command = `systemctl --user stop -- '${unit}'`;
+    template.actions.find((a) => a.kind === "status")!.command = [
+      `load=$(systemctl --user show --property=LoadState --value -- '${unit}') || exit 5`,
+      '[ "$load" = loaded ] || exit 5',
+      `state=$(systemctl --user show --property=ActiveState --value -- '${unit}') || exit 5`,
+      'case "$state" in', "  active) exit 0 ;;", "  inactive) exit 3 ;;",
+      "  failed) exit 4 ;;", "  *) exit 5 ;;", "esac",
+    ].join("\n");
+    const start = { ...service.actions[0], command: 'printf "%s" "$MESSAGE"', invocation: undefined };
+    const labels = { start: "Start", stop: "Stop", restart: "Restart", status: "Status", logs: "Logs", custom: "Custom" };
+    const managed = manageServiceWithSystemd(service, start, template, labels);
+    expect(managed.actions[0].id).toBe(start.id);
+    expect(managed.actions[0].command).toBe(start.command);
+    expect(managed.actions[0].systemdLaunch).toEqual({ unit, mode: "persistent" });
+    expect(managed.control?.checkAfterActions).toBe(true);
+    const lifecycle = systemdService(managed);
+    expect(lifecycle?.unit).toBe(unit);
+    expect(lifecycle?.startId).toBe(start.id);
+    expect(systemdService({
+      ...managed,
+      actions: managed.actions.map((action) => action === lifecycle?.status
+        ? { ...action, command: action.command + "\nprintf unrelated" }
+        : action),
+    })).toBeUndefined();
+    const invocation = {
       executable: "dsh",
-      arguments: [{ name: "--path", value: "$HOME/$(id)/%n" }],
+      arguments: [
+        { name: "", value: "web" },
+        { name: "--port", value: "13085" },
+        { name: "--title", value: "A '$HOME'" },
+      ],
+    };
+    const command = [
+      'if [ "$(loginctl show-user "$(id -u)" --property=Linger --value 2>/dev/null)" != yes ]; then',
+      "  printf '%s\\n' 'systemd user service requires Linger=yes to survive logout.' >&2",
+      "  exit 1",
+      "fi",
+      `if [ "$(systemctl --user show --property=ActiveState --value -- '${unit}' 2>/dev/null)" = failed ]; then`,
+      `  systemctl --user reset-failed -- '${unit}' || exit $?`,
+      "fi",
+      `systemd-run --user --no-ask-password --service-type=exec --unit='${unit}' --setenv=PATH -- /bin/sh -c ` +
+        renderInvocation({ executable: renderInvocation(invocation).replaceAll("$", () => "$$"), arguments: [] }),
+    ].join("\n");
+    function legacy(command: string) {
+      return { ...managed, actions: [{ ...start, mode: "command" as const, timeoutSecs: 60, command }, ...managed.actions.slice(1)] };
+    }
+    expect(restoreSystemdCommand(legacy(command)).actions[0]).toMatchObject({
+      command: renderInvocation(invocation),
+      invocation,
+      systemdLaunch: { unit, mode: "persistent" },
     });
-    expect(result.actions[0].invocation?.arguments.at(-1)?.value).toBe(
-      "$$HOME/$$(id)/%n",
-    );
-    expect(result.actions[0].command).not.toContain("--expand-environment");
+    const modified = command + "\nprintf custom";
+    expect(restoreSystemdCommand(legacy(modified)).actions[0].command).toBe(modified);
+  });
+  it("uses the template port as a default while preserving the configured service port", () => {
+    for (const id of ["dsh", "dsh-systemd", "jupyter", "memcached", "prometheus", "minio"]) {
+      const preset = builtinServiceTemplates.find((p) => p.id === id)!;
+      const template = applyLaunchTemplate(base("oria-example.service"), preset, preset.launch);
+      const start = template.actions.find((action) => action.kind === "start")!;
+      expect(start.servicePortVariable).toBe(true);
+      expect(start.invocation?.arguments.some((arg) => arg.value?.includes(servicePortToken))).toBe(true);
+      expect(fillServiceTemplate({ ...service, port: null }, template).port).toBeGreaterThan(0);
+      expect(fillServiceTemplate({ ...service, port: 13085 }, template).port).toBe(13085);
+    }
+    const preset = builtinServiceTemplates.find((p) => p.id === "minio")!;
+    const start = applyLaunchTemplate(base("oria-minio.service"), preset, preset.launch).actions[0];
+    expect(start.invocation?.arguments.find((arg) => arg.name === "--console-address")?.value).toBe("127.0.0.1:9001");
   });
   it("uses a direct dsh foreground command on port 3080 and a native VNC daemon", () => {
     const preset = builtinServiceTemplates.find((p) => p.id === "dsh")!;
     expect(preset.icon).toBe("dsh");
     expect(preset.category).toBe("inference");
     expect(renderInvocation(preset.launch!)).toBe(
-      "'dsh' 'web' '--port' '3080'",
+      "'dsh' 'web' '--port' '{{service.port}}'",
     );
     const dsh = applyLaunchTemplate(base("unused"), preset, preset.launch);
     expect(dsh.actions).toHaveLength(1);
@@ -746,27 +814,7 @@ describe("service configuration", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
-  it("exposes services as a page with decorated cards and editable command structure", () => {
-    const html = renderToStaticMarkup(
-      <PresetCommandProvider data={snapshot} onSnapshot={() => {}} page>
-        <ServicesPage />
-      </PresetCommandProvider>,
-    );
-    expect(html).toContain("services-page");
-    expect(html).toContain("Model service");
-    expect(html).toContain("Launch");
-    expect(html).toContain("service-command-summary");
-    expect(html).toContain("service-select");
-    expect(html).toContain("lucide-copy-plus");
-    expect(html).toContain(
-      `${i18n.t("copyService", { ns: "commands" })} Model service`,
-    );
-    expect(html).toContain(
-      `${i18n.t("details", { ns: "tunnel" })} Model service`,
-    );
-    expect(html).toContain(i18n.t("batch.selectAll", { ns: "commands" }));
-    expect(html).toContain(i18n.t("batch.exportAll", { ns: "commands" }));
-    expect(html).not.toContain('role="dialog"');
+  it("keeps service appearance and command controls in the host editor", () => {
     const editor = renderToStaticMarkup(
       <ServiceEditor
         service={service}
@@ -776,22 +824,25 @@ describe("service configuration", () => {
         onCancel={() => {}}
       />,
     );
-    expect(editor).toContain("connection-color-palette");
-    expect(editor).toContain("connection-icon-picker");
-    expect(editor).toContain(i18n.t("serviceColor", { ns: "commands" }));
+    expect(editor).toContain("profile-icon-trigger");
     expect(editor).toContain(i18n.t("serviceIcon", { ns: "commands" }));
+    expect(editor).toContain('class="service-editor-connection"');
+    expect(editor).toContain('class="editor-disclosure service-command-item"');
+    expect(editor).toContain(
+      'class="editor-disclosure service-editor-advanced"',
+    );
     expect(
       editor.indexOf(i18n.t("templates.import", { ns: "commands" })),
     ).toBeLessThan(editor.indexOf("<form"));
     expect(editor).not.toContain(i18n.t("connectionColor", { ns: "tunnel" }));
     expect(editor).not.toContain(i18n.t("selectHostSearch", { ns: "tunnel" }));
     expect(editor).not.toContain(i18n.t("linkedForwards", { ns: "commands" }));
-    expect(html).not.toMatch(/<button[^>]*>Launch<\/button>/);
+    expect(editor).not.toContain('name="hostIds"');
 
     expect(editor).toContain(i18n.t("builder.title", { ns: "commands" }));
   });
-  it("can save a command template with no hosts or forward references", () => {
-    const unbound = { ...service, executionHostId: "", ruleIds: [] };
+  it("requires a host before a service can be saved", () => {
+    const unbound = { ...service, id: "", hostIds: [], executionHostId: "", ruleIds: [] };
     const html = renderToStaticMarkup(
       <ServiceEditor
         service={unbound}
@@ -803,19 +854,18 @@ describe("service configuration", () => {
     );
     const save = html.match(/<button[^>]*type="submit"[^>]*>/)?.[0];
     expect(save).toBeDefined();
-    expect(save).not.toMatch(/\sdisabled(?:=|\s|>)/);
+    expect(save).toMatch(/\sdisabled(?:=|\s|>)/);
   });
-  it("renders bound service chips in the forward editor without changing its SSH host", () => {
+  it("renders bound service chips in the D editor without changing its SSH host", () => {
     const html = renderToStaticMarkup(
       <RuleEditor
-        draft={snapshot.rules[0]}
+        draft={{ ...snapshot.rules[0], kind: "D" }}
         hosts={[host]}
         services={[service]}
         busy={false}
         reconnect={false}
         onChange={() => {}}
         onAddHost={() => {}}
-        onManageHosts={() => {}}
         onSave={() => {}}
         onCancel={() => {}}
       />,

@@ -51,7 +51,6 @@ __oria_load_history() {
 }
 __oria_prompt() {
     local previous=$? saved request op seq payload value base prefix name eligible=0 last
-    local draft= point=0
     local -a __oria_items
     [ -t 0 ] && [ -t 1 ] || return "$previous"
     if [ "${__oria_ps1+x}" ]; then
@@ -94,7 +93,9 @@ __oria_prompt() {
     if [ -n "${CONDA_DEFAULT_ENV-}" ]; then conda=${CONDA_DEFAULT_ENV##*/}; fi
     if [ -z "$venv$conda" ]; then pyenv=${PYENV_VERSION-}; fi
     if [ -n "${IN_NIX_SHELL-}" ]; then nix=nix-shell; fi
-    __oria_emit ready 0 "$PWD" "$HOME" "$eligible" "$venv" "$conda" "$pyenv" "$nix"
+    local shell=bash
+    [ -z "${ZSH_VERSION-}" ] || shell=zsh
+    __oria_emit ready 0 "$PWD" "$HOME" "$eligible" "$venv" "$conda" "$pyenv" "$nix" "$shell" "${OSTYPE-}"
     printf '\033[3J\033[2J\033[H'
     if [ -z "${__oria_history_loaded-}" ]; then
         __oria_history_loaded=1
@@ -110,10 +111,6 @@ __oria_prompt() {
         value=${value%.}
         __oria_items=()
         case "$op" in
-            edit)
-                point=${value%% *}; draft=${value#* }
-                __oria_emit edited "$seq" "$point"
-                ;;
             logout)
                 command stty "$saved"
                 builtin exit
@@ -122,8 +119,7 @@ __oria_prompt() {
                 __oria_ps1=$PS1
                 local native=$PS1 marker
                 if [ "$op" = run ]; then
-                    draft=$value
-                    __oria_submitted=$draft
+                    __oria_submitted=$value
                     native='$ '
                 fi
                 if [ -n "${ZSH_VERSION-}" ]; then

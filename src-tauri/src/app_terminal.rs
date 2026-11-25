@@ -4,6 +4,7 @@ use tauri::ipc::Channel;
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Open {
+    login_id: Option<String>,
     host_id: String,
     #[serde(default)]
     rule_id: Option<String>,
@@ -82,6 +83,8 @@ pub async fn open_local_terminal(
         client_id,
         host_id: String::new(),
         route_host_ids: vec![],
+        login_id: None,
+        service_revision: None,
         host_name: String::new(),
         endpoint: shell.clone(),
         label,
@@ -152,6 +155,16 @@ async fn launch(
         &request.action_id,
     )? {
         scope.check(&session.id)?;
+        if let Some(id) = &request.login_id {
+            if id
+                != &session
+                    .login_id
+                    .clone()
+                    .unwrap_or_else(|| primary_login_id(&session.host_id))
+            {
+                return Err("invalidSession".into());
+            }
+        }
         return Ok(session);
     }
     let snapshot = state.snapshot();
@@ -188,18 +201,19 @@ async fn launch(
         if target.id != host.id || Some(&service.revision) != request.revision.as_ref() {
             return Err("staleAction".into());
         }
-        let action = service
+        let mut action = service
             .actions
             .iter()
             .find(|a| Some(&a.id) == request.action_id.as_ref())
             .ok_or("actionMissing")?
-            .clone();
+            .resolved(service.port)?;
         if action.mode != crate::commands::ExecutionMode::Terminal {
             return Err("terminalRequired".into());
         }
         if action.confirm && !request.confirmed {
             return Err("confirmationRequired".into());
         }
+        action.use_foreground_timeout();
         if state
             .commands
             .list()
@@ -215,6 +229,11 @@ async fn launch(
             return Err("invalidSession".into());
         }
         None
+    };
+    let host = if let Some((service, _)) = &profile {
+        service.execution_login(&host, request.login_id.as_deref())?
+    } else {
+        sessions::default_login(&host, request.login_id.as_deref())?
     };
     let no_env = profile
         .as_ref()
@@ -266,6 +285,8 @@ async fn launch(
         client_id: request.client_id,
         host_id: host.id.clone(),
         route_host_ids: route.iter().map(|h| h.id.clone()).collect(),
+        login_id: Some(host.login_id()),
+        service_revision: profile.as_ref().map(|(s, _)| s.revision.clone()),
         host_name: host.name.clone(),
         endpoint: format!("{}@{}:{}", host.user, host.address, host.port),
         service_id: profile.as_ref().map(|(s, _)| s.id.clone()),
@@ -347,9 +368,7 @@ async fn launch(
         let current = check_state.snapshot();
         frozen.iter().all(|before| {
             current.hosts.iter().any(|after| {
-                after.id == before.id
-                    && after.diagnostics.is_empty()
-                    && before.same_connection(after)
+                after.id == before.id && after.diagnostics.is_empty() && after.matches_login(before)
             })
         }) && frozen_rule.as_ref().is_none_or(|r| {
             current
@@ -386,6 +405,7 @@ async fn launch(
     };
     let job = id.clone();
     let task_state = state.clone();
+    let history_app = app.clone();
     let join = tokio::spawn(async move {
         terminal::execute(
             task_state.terminals.clone(),
@@ -395,6 +415,24 @@ async fn launch(
             request,
         )
         .await;
+        if let Some((service, _)) = profile {
+            if let Some(session) = task_state
+                .terminals
+                .list()
+                .into_iter()
+                .find(|s| s.id == job)
+            {
+                task_state.activity.lock().unwrap().command_finished(
+                    &host,
+                    session.rule_id.as_deref(),
+                    &service.id,
+                    &job,
+                    &session.phase,
+                    session.error.as_deref() == Some("authentication"),
+                );
+                task_state.publish(&history_app);
+            }
+        }
         task_state.trust.lock().unwrap().remove(&job);
     });
     let mut workers = state.terminal_workers.lock().await;

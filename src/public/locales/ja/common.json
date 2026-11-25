@@ -93,7 +93,7 @@
     "showDescription": "説明を表示"
   },
   "initialPreferences": {
-    "title": "OriaTunnel へようこそ",
+    "title": "OriaSSH へようこそ",
     "description": "使いやすい外観を選びましょう。後から設定で変更できます。",
     "done": "使い始める",
     "saveFailed": "初期設定の完了状態を保存できません。次回起動時に再表示されます。"

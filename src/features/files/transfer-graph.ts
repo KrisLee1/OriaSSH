@@ -1,17 +1,22 @@
 import { MarkerType, Position, type Edge, type Node } from "@xyflow/react";
+import type { Host } from "@/types";
 import type { FileActivity } from "./transfer-state";
 
 export const filePortId = (kind: "source" | "target", side: Position) =>
   `files-${kind}-${side}`;
 export function projectFileEdges(
   activities: FileActivity[],
-  nodes: Pick<Node, "id" | "position" | "measured" | "width" | "height">[],
+  nodes: (Pick<Node, "id" | "position" | "measured" | "width" | "height"> & {
+    data?: { host?: Pick<Host, "appearance"> };
+  })[],
   previous: Edge[] = [],
 ): Edge[] {
   const locations = new Map(
     nodes.map((node) => [
       node.id,
       {
+        color:
+          node.data?.host?.appearance?.color || "var(--oria-color-primary)",
         x: node.position.x + (node.measured?.width || node.width || 240) / 2,
         y: node.position.y + (node.measured?.height || node.height || 160) / 2,
       },
@@ -71,7 +76,9 @@ export function projectFileEdges(
           ? "conflict"
           : group.items.every((item) => item.phase === "paused")
             ? "paused"
-            : "preparing";
+            : group.items.some((item) => item.phase === "committing")
+              ? "committing"
+              : "preparing";
     const title = [...new Set(group.items.map((item) => item.filename))]
       .slice(0, 3)
       .join("\n");
@@ -80,10 +87,14 @@ export function projectFileEdges(
     const taskKey = JSON.stringify(taskIds);
     const sourceHandle = filePortId("source", from),
       targetHandle = filePortId("target", to);
+    const color = group.source === "local" ? target.color : source.color;
+    const targetColor = group.target === "local" ? source.color : target.color;
     const before = saved.get(id);
     if (
       before?.sourceHandle === sourceHandle &&
       before.targetHandle === targetHandle &&
+      before.style?.stroke === color &&
+      before.data?.targetColor === targetColor &&
       before.data?.moving === moving &&
       before.data?.phase === phase &&
       before.data?.count === group.items.length &&
@@ -92,9 +103,6 @@ export function projectFileEdges(
       before.data?.relay === relay
     )
       return before;
-    const color = ["paused", "conflict", "directUnknown"].includes(phase)
-      ? "var(--oria-color-warning)"
-      : "var(--oria-color-primary)";
     return {
       id,
       source: group.source,
@@ -104,6 +112,7 @@ export function projectFileEdges(
       type: "file-transfer",
       data: {
         moving,
+        targetColor,
         phase,
         count: group.items.length,
         title,
@@ -111,9 +120,9 @@ export function projectFileEdges(
         taskIds,
         taskKey,
       },
-      className: `file-transfer-edge ${moving ? "file-transfer-moving" : ""}`,
+      className: `file-transfer-edge ${moving ? "file-transfer-moving connection-transferring" : ""}`,
       style: { stroke: color, strokeWidth: 1.5 },
-      markerEnd: { type: MarkerType.ArrowClosed, color },
+      markerEnd: { type: MarkerType.ArrowClosed, color: targetColor },
     };
   });
   return result.length === previous.length &&

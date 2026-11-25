@@ -2,7 +2,7 @@ use std::ffi::c_void;
 use tauri::{plugin::TauriPlugin, Manager, RunEvent, WindowEvent, Wry};
 
 extern "C" {
-    fn oria_tunnel_install_fullscreen_chrome(window: *mut c_void);
+    fn oria_ssh_install_fullscreen_chrome(window: *mut c_void);
 }
 
 fn is_work_window(label: &str) -> bool {
@@ -16,7 +16,7 @@ pub fn plugin() -> TauriPlugin<Wry> {
             if is_work_window(window.label()) {
                 if let Ok(native) = window.ns_window() {
                     // Tauri runs this hook on the main thread with a live NSWindow.
-                    unsafe { oria_tunnel_install_fullscreen_chrome(native) };
+                    unsafe { oria_ssh_install_fullscreen_chrome(native) };
                 }
             }
         })

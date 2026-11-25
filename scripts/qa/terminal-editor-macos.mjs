@@ -122,7 +122,8 @@ try {
       fs.readFileSync("scripts/qa/terminal-editor-probe.js", "utf8"),
   );
   const overrides = {
-    identifier: "com.oria-tunnel.qa.terminal-editor",
+    identifier: "com.oria-ssh.qa.terminal-editor",
+    mainBinaryName: "oria-ssh",
     build: { frontendDist: ui, beforeBuildCommand: "" },
     app: { security: { csp: config.app.security.csp + " " + origin } },
   };
@@ -140,7 +141,7 @@ try {
   );
   const empty = path.join(temp, "ssh-config");
   fs.writeFileSync(empty, "");
-  app = spawn("src-tauri/target/debug/oria-tunnel", [], {
+  app = spawn("src-tauri/target/debug/oria-ssh", [], {
     env: {
       ...process.env,
       ...(localOnly
@@ -151,8 +152,8 @@ try {
             SHELL: "/bin/" + localShell,
           }
         : {}),
-      ORIATUNNEL_TEST_DATA_DIR: path.join(temp, "data"),
-      ORIATUNNEL_TEST_SSH_CONFIG: empty,
+      ORIASSH_TEST_DATA_DIR: path.join(temp, "data"),
+      ORIASSH_TEST_SSH_CONFIG: empty,
     },
     stdio: ["ignore", "ignore", "inherit"],
   });

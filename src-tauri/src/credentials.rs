@@ -1,6 +1,6 @@
-//! Passwords only enter the OS vault after successful SSH password authentication.
+//! Passwords stay in the OS vault. Connection attempts may update them after authentication.
 use crate::{
-    model::{AuthMethod, Host},
+    model::{AuthMethod, Host, LoginIdentity},
     tunnel::Secret,
 };
 use serde::{Deserialize, Serialize};
@@ -42,65 +42,247 @@ impl Vault {
             epochs: Mutex::new(BTreeMap::new()),
         }
     }
-    fn target(&self, host: &Host) -> String {
-        format!(
-            "OriaTunnel/password/v1/{}/{}",
-            self.scope,
-            hash(host.id.as_bytes())
+    // Only the stable original login may claim the old host-scoped key.
+    // Selecting another default later must never transfer access to the v1 entry.
+    pub fn primary(&self, host: &Host) -> LoginPassword<'_> {
+        if let Some(id) = host
+            .active_login_id
+            .as_deref()
+            .filter(|id| host.credential_ids.iter().any(|linked| linked == *id))
+        {
+            return self.shared(id, &host.user, &host.auth_method);
+        }
+        self.login(
+            host,
+            host.active_login_id
+                .as_deref()
+                .unwrap_or(&crate::model::primary_login_id(&host.id)),
         )
     }
-    pub fn epoch(&self, id: &str) -> u64 {
-        *self.epochs.lock().unwrap().get(id).unwrap_or(&0)
+
+    pub fn credential(&self, credential: &LoginIdentity) -> LoginPassword<'_> {
+        self.shared(&credential.id, &credential.user, &credential.auth_method)
     }
-    pub fn read(&self, host: &Host) -> Result<Option<Secret>, String> {
-        let mut epochs = self.epochs.lock().unwrap();
-        let Some(bytes) = platform::read(&self.target(host))? else {
+
+    fn shared(&self, id: &str, user: &str, method: &AuthMethod) -> LoginPassword<'_> {
+        let key = hash(id.as_bytes());
+        LoginPassword {
+            vault: self,
+            binding: hash(&serde_json::to_vec(&(user, method)).unwrap()),
+            eligible: method.accepts_password(),
+            discard_mismatch: false,
+            target: format!("OriaTunnel/ssh-credential/v1/{}/{key}", self.scope),
+            legacy: None,
+        }
+    }
+
+    fn login(&self, host: &Host, identity_id: &str) -> LoginPassword<'_> {
+        let key = hash(&serde_json::to_vec(&(&host.id, identity_id)).unwrap());
+        LoginPassword {
+            vault: self,
+            binding: binding(host),
+            eligible: host.auth_method.accepts_password(),
+            discard_mismatch: true,
+            target: format!("OriaTunnel/password/v2/{}/{key}", self.scope),
+            legacy: (identity_id == crate::model::primary_login_id(&host.id)).then(|| {
+                format!(
+                    "OriaTunnel/password/v1/{}/{}",
+                    self.scope,
+                    hash(host.id.as_bytes())
+                )
+            }),
+        }
+    }
+}
+
+pub struct LoginPassword<'a> {
+    vault: &'a Vault,
+    binding: String,
+    eligible: bool,
+    discard_mismatch: bool,
+    target: String,
+    legacy: Option<String>,
+}
+
+type LegacyPassword<'a> = (&'a str, Zeroizing<Vec<u8>>);
+
+fn decode(bytes: &[u8]) -> Result<Stored, String> {
+    serde_json::from_slice(bytes).map_err(|_| crate::native_message::plain("savedPasswordInvalid"))
+}
+
+impl LoginPassword<'_> {
+    pub fn epoch(&self) -> u64 {
+        *self
+            .vault
+            .epochs
+            .lock()
+            .unwrap()
+            .get(&self.target)
+            .unwrap_or(&0)
+    }
+
+    fn matching_legacy(&self) -> Result<Option<Zeroizing<Vec<u8>>>, String> {
+        let Some(key) = &self.legacy else {
             return Ok(None);
         };
-        let mut stored: Stored = serde_json::from_slice(&bytes)
-            .map_err(|_| crate::native_message::plain("savedPasswordInvalid"))?;
-        if stored.binding != binding(host) {
-            *epochs.entry(host.id.clone()).or_default() += 1;
-            platform::delete(&self.target(host))?;
+        let Some(bytes) = platform::read(key)? else {
+            return Ok(None);
+        };
+        Ok((decode(&bytes)?.binding == self.binding).then_some(bytes))
+    }
+
+    fn legacy_for_removal(
+        &self,
+        forget_invalid: bool,
+    ) -> Result<Option<LegacyPassword<'_>>, String> {
+        let Some(key) = &self.legacy else {
+            return Ok(None);
+        };
+        let Some(bytes) = platform::read(key)? else {
+            return Ok(None);
+        };
+        // A malformed v1 entry must not prevent use of a valid v2 password.
+        // Explicit credential edits may discard it.
+        let remove = match decode(&bytes) {
+            Ok(stored) => stored.binding == self.binding,
+            Err(_) => forget_invalid,
+        };
+        Ok(remove.then_some((key, bytes)))
+    }
+
+    fn clear_matching_legacy(&self, forget_invalid: bool) -> Result<(), String> {
+        if let Some((key, _)) = self.legacy_for_removal(forget_invalid)? {
+            platform::delete(key)?;
+        }
+        Ok(())
+    }
+
+    pub fn read(&self) -> Result<Option<Secret>, String> {
+        let mut epochs = self.vault.epochs.lock().unwrap();
+        let bytes = match platform::read(&self.target)? {
+            Some(current) => current,
+            None => {
+                let Some(old) = self.matching_legacy()? else {
+                    return Ok(None);
+                };
+                platform::write(&self.target, &old)?;
+                old
+            }
+        };
+        let mut stored = decode(&bytes)?;
+        if stored.binding != self.binding {
+            if self.discard_mismatch {
+                *epochs.entry(self.target.clone()).or_default() += 1;
+                platform::delete(&self.target)?;
+            }
             return Ok(None);
         }
-        if !matches!(host.auth_method, AuthMethod::Auto | AuthMethod::Password) {
+        // A failed delete can be retried with the already-committed v2 entry.
+        self.clear_matching_legacy(false)?;
+        if !self.eligible {
             return Ok(None);
         }
         Ok(Some(Secret::password(std::mem::take(&mut stored.password))))
     }
-    pub fn save(
-        &self,
-        host: &Host,
-        password: &str,
-        method: AuthMethod,
-        epoch: u64,
-    ) -> Result<(), String> {
-        let epochs = self.epochs.lock().unwrap();
-        if method != AuthMethod::Password
+
+    pub fn save(&self, password: &str, method: AuthMethod, epoch: u64) -> Result<(), String> {
+        let epochs = self.vault.epochs.lock().unwrap();
+        if !self.eligible
+            || method != AuthMethod::Password
             || password.is_empty()
-            || *epochs.get(&host.id).unwrap_or(&0) != epoch
+            || *epochs.get(&self.target).unwrap_or(&0) != epoch
         {
             return Ok(());
         }
+        self.write(password)?;
+        self.clear_matching_legacy(false)
+    }
+
+    fn write(&self, password: &str) -> Result<(), String> {
         #[derive(Serialize)]
         struct Payload<'a> {
-            binding: String,
+            binding: &'a str,
             password: &'a str,
         }
         let bytes = Zeroizing::new(
             serde_json::to_vec(&Payload {
-                binding: binding(host),
+                binding: &self.binding,
                 password,
             })
             .map_err(|_| crate::native_message::plain("passwordPrepareFailed"))?,
         );
-        platform::write(&self.target(host), &bytes)
+        platform::write(&self.target, &bytes)
     }
-    pub fn forget(&self, host: &Host) -> Result<(), String> {
-        let mut epochs = self.epochs.lock().unwrap();
-        *epochs.entry(host.id.clone()).or_default() += 1;
-        platform::delete(&self.target(host))
+
+    pub fn prepare(
+        &self,
+        supplied: Secret,
+        use_saved: bool,
+        remember: bool,
+    ) -> Result<(Secret, Option<u64>), String> {
+        if !self.eligible {
+            return Ok((supplied, None));
+        }
+        if supplied.is_empty() {
+            let secret = if use_saved {
+                self.read()?.unwrap_or_default()
+            } else {
+                supplied
+            };
+            return Ok((secret, None));
+        }
+        let epoch = self.epoch();
+        let update = remember || self.read().is_ok_and(|password| password.is_some());
+        Ok((supplied, update.then_some(epoch)))
+    }
+
+    pub fn replace_with(
+        &self,
+        password: Option<&str>,
+        commit: impl FnOnce() -> Result<(), String>,
+    ) -> Result<(), String> {
+        let mut epochs = self.vault.epochs.lock().unwrap();
+        if password.is_some() && !self.eligible {
+            return Err(crate::native_message::plain("passwordPrepareFailed"));
+        }
+        let legacy = self.legacy_for_removal(true)?;
+        let previous = platform::read(&self.target)?;
+        if let Some(password) = password {
+            self.write(password)?;
+        } else if previous.is_some() {
+            platform::delete(&self.target)?;
+        }
+        let remove_legacy = if let Some((key, _)) = &legacy {
+            platform::delete(key)
+        } else {
+            Ok(())
+        };
+        let legacy_removed = remove_legacy.is_ok();
+        if let Err(error) = remove_legacy.and_then(|()| commit()) {
+            let restore_current = if let Some(previous) = previous {
+                platform::write(&self.target, &previous)
+            } else if password.is_some() {
+                platform::delete(&self.target)
+            } else {
+                Ok(())
+            };
+            let restore_legacy = if let Some((key, bytes)) = legacy.filter(|_| legacy_removed) {
+                platform::write(key, &bytes)
+            } else {
+                Ok(())
+            };
+            restore_current.and(restore_legacy)?;
+            return Err(error);
+        }
+        *epochs.entry(self.target.clone()).or_default() += 1;
+        Ok(())
+    }
+
+    pub fn forget(&self) -> Result<(), String> {
+        let mut epochs = self.vault.epochs.lock().unwrap();
+        *epochs.entry(self.target.clone()).or_default() += 1;
+        self.clear_matching_legacy(true)?;
+        platform::delete(&self.target)
     }
 }
 
@@ -275,20 +457,67 @@ mod tests {
         }
         fn save(&self, password: &str) {
             self.vault
+                .primary(&self.host)
                 .save(
-                    &self.host,
                     password,
                     AuthMethod::Password,
-                    self.vault.epoch(&self.host.id),
+                    self.vault.primary(&self.host).epoch(),
                 )
                 .unwrap();
         }
     }
     impl Drop for Fixture {
         fn drop(&mut self) {
-            let _ = self.vault.forget(&self.host);
+            let _ = self.vault.primary(&self.host).forget();
         }
     }
+    #[test]
+    fn only_the_original_login_claims_its_matching_legacy_password() {
+        let f = Fixture::new();
+        let primary = f.vault.primary(&f.host);
+        let legacy_key = primary.legacy.as_deref().unwrap();
+        let second = f.vault.login(&f.host, "second");
+        let value = Zeroizing::new(uuid::Uuid::new_v4().to_string());
+        // Seed a real v1 entry with the fixture's ephemeral secret.
+        primary.save(&value, AuthMethod::Password, 0).unwrap();
+        let payload = platform::read(&primary.target).unwrap().unwrap();
+        platform::write(legacy_key, &payload).unwrap();
+        platform::delete(&primary.target).unwrap();
+        assert!(second.read().unwrap().is_none());
+        let mut renamed = f.host.clone();
+        renamed.user = "another-user".into();
+        assert!(f.vault.primary(&renamed).read().unwrap().is_none());
+        assert!(platform::read(legacy_key).unwrap().is_some());
+        assert!(primary.read().unwrap().is_some_and(|s| *s == **value));
+        assert!(platform::read(legacy_key).unwrap().is_none());
+        let second_value = Zeroizing::new(uuid::Uuid::new_v4().to_string());
+        second.save(&second_value, AuthMethod::Password, 0).unwrap();
+        // Retry after interruption between publishing v2 and cleaning up v1.
+        platform::write(legacy_key, &payload).unwrap();
+        assert!(primary.read().unwrap().is_some_and(|s| *s == **value));
+        assert!(platform::read(legacy_key).unwrap().is_none());
+        primary.forget().unwrap();
+        assert!(second.read().unwrap().is_some_and(|s| *s == **second_value));
+        assert_eq!(second.epoch(), 0);
+        second.forget().unwrap();
+        platform::write(legacy_key, &payload).unwrap();
+        assert!(primary
+            .replace_with(Some(&second_value), || Err("fixture save failed".into()))
+            .is_err());
+        assert!(platform::read(&primary.target).unwrap().is_none());
+        assert!(platform::read(legacy_key).unwrap().is_some());
+        primary.replace_with(None, || Ok(())).unwrap();
+        assert!(primary.read().unwrap().is_none());
+        platform::write(legacy_key, b"invalid").unwrap();
+        assert!(primary.read().is_err());
+        primary
+            .save(&value, AuthMethod::Password, primary.epoch())
+            .unwrap();
+        assert!(primary.read().unwrap().is_some());
+        primary.forget().unwrap();
+        assert!(platform::read(legacy_key).unwrap().is_none());
+    }
+
     #[test]
     fn os_vault_roundtrip_is_scoped_and_clear_invalidates_pending_writes() {
         let f = Fixture::new();
@@ -296,22 +525,24 @@ mod tests {
         f.save(&password);
         assert!(f
             .vault
-            .read(&f.host)
+            .primary(&f.host)
+            .read()
             .unwrap()
             .is_some_and(|s| *s == **password));
         let other = Fixture::new();
-        assert!(other.vault.read(&f.host).unwrap().is_none());
+        assert!(other.vault.primary(&f.host).read().unwrap().is_none());
         let mut other_host = f.host.clone();
         other_host.id = "other".into();
-        assert!(f.vault.read(&other_host).unwrap().is_none());
-        let old = f.vault.epoch(&f.host.id);
-        f.vault.forget(&f.host).unwrap();
+        assert!(f.vault.primary(&other_host).read().unwrap().is_none());
+        let old = f.vault.primary(&f.host).epoch();
+        f.vault.primary(&f.host).forget().unwrap();
         f.vault
-            .save(&f.host, &password, AuthMethod::Password, old)
+            .primary(&f.host)
+            .save(&password, AuthMethod::Password, old)
             .unwrap();
-        assert!(f.vault.read(&f.host).unwrap().is_none());
+        assert!(f.vault.primary(&f.host).read().unwrap().is_none());
         f.save(&password);
-        assert!(f.vault.read(&f.host).unwrap().is_some());
+        assert!(f.vault.primary(&f.host).read().unwrap().is_some());
     }
     #[test]
     fn endpoint_changes_invalidate_credentials_but_display_changes_do_not() {
@@ -322,31 +553,103 @@ mod tests {
             let mut host = f.host.clone();
             host.name = "Renamed".into();
             host.tags = vec!["new".into()];
-            assert!(f.vault.read(&host).unwrap().is_some());
+            assert!(f.vault.primary(&host).read().unwrap().is_some());
             match field {
                 "address" => host.address = "changed.invalid".into(),
                 "user" => host.user = "changed".into(),
                 "port" => host.port = 2222,
                 _ => host.auth_method = AuthMethod::PrivateKey,
             }
-            assert!(f.vault.read(&host).unwrap().is_none());
-            assert!(f.vault.read(&f.host).unwrap().is_none());
+            assert!(f.vault.primary(&host).read().unwrap().is_none());
+            assert!(f.vault.primary(&f.host).read().unwrap().is_none());
         }
+    }
+    #[test]
+    fn shared_password_seeding_and_rotation_are_scoped_and_transactional() {
+        let f = Fixture::new();
+        let profile = LoginIdentity {
+            id: uuid::Uuid::new_v4().to_string(),
+            label: String::new(),
+            user: f.host.user.clone(),
+            auth_method: AuthMethod::Password,
+            identity_files: vec![],
+        };
+        let entry = f.vault.credential(&profile);
+        struct Cleanup<'a>(LoginPassword<'a>);
+        impl Drop for Cleanup<'_> {
+            fn drop(&mut self) {
+                let _ = self.0.forget();
+            }
+        }
+        let _cleanup = Cleanup(f.vault.credential(&profile));
+        let old = Zeroizing::new(uuid::Uuid::new_v4().to_string());
+        let new = Zeroizing::new(uuid::Uuid::new_v4().to_string());
+        let mut linked = f.host.clone();
+        linked.credential_ids.push(profile.id.clone());
+        linked.active_login_id = Some(profile.id.clone());
+        let mut second = linked.clone();
+        second.id = "second-fixture".into();
+        second.address = "second.invalid".into();
+
+        let (_, update) = f
+            .vault
+            .primary(&linked)
+            .prepare(Secret::from(new.as_str()), true, false)
+            .unwrap();
+        assert!(update.is_none());
+        entry.replace_with(Some(&old), || Ok(())).unwrap();
+        assert!(f.vault.primary(&f.host).read().unwrap().is_none());
+        let (automatic, update) = f
+            .vault
+            .primary(&second)
+            .prepare(Secret::default(), true, false)
+            .unwrap();
+        assert!(*automatic == **old);
+        assert!(update.is_none());
+        let (entered, update) = f
+            .vault
+            .primary(&linked)
+            .prepare(Secret::from(new.as_str()), true, false)
+            .unwrap();
+        let update = update.unwrap();
+        entry
+            .save(&entered, AuthMethod::PrivateKey, update)
+            .unwrap();
+        assert!(entry.read().unwrap().is_some_and(|secret| *secret == **old));
+        entry.save(&entered, AuthMethod::Password, update).unwrap();
+        assert!(f
+            .vault
+            .primary(&second)
+            .read()
+            .unwrap()
+            .is_some_and(|secret| *secret == **new));
+
+        assert!(entry
+            .replace_with(Some(&old), || Err("fixture save failed".into()))
+            .is_err());
+        assert!(entry.read().unwrap().is_some_and(|secret| *secret == **new));
+        let mut old_host = linked.clone();
+        old_host.user = "different-fixture-user".into();
+        assert!(f.vault.primary(&old_host).read().unwrap().is_none());
+        assert!(entry.read().unwrap().is_some_and(|secret| *secret == **new));
+        entry.replace_with(None, || Ok(())).unwrap();
+        entry.save(&entered, AuthMethod::Password, update).unwrap();
+        assert!(entry.read().unwrap().is_none());
     }
     #[test]
     fn passphrases_empty_inputs_and_corrupt_entries_are_not_reused() {
         let f = Fixture::new();
         let value = Zeroizing::new(uuid::Uuid::new_v4().to_string());
         for method in [AuthMethod::PrivateKey, AuthMethod::Agent, AuthMethod::Auto] {
-            f.vault.save(&f.host, &value, method, 0).unwrap();
-            assert!(f.vault.read(&f.host).unwrap().is_none());
+            f.vault.primary(&f.host).save(&value, method, 0).unwrap();
+            assert!(f.vault.primary(&f.host).read().unwrap().is_none());
         }
         f.save("");
-        assert!(f.vault.read(&f.host).unwrap().is_none());
-        platform::write(&f.vault.target(&f.host), b"invalid").unwrap();
-        assert!(f.vault.read(&f.host).is_err());
-        f.vault.forget(&f.host).unwrap();
-        assert!(f.vault.read(&f.host).unwrap().is_none());
+        assert!(f.vault.primary(&f.host).read().unwrap().is_none());
+        platform::write(&f.vault.primary(&f.host).target, b"invalid").unwrap();
+        assert!(f.vault.primary(&f.host).read().is_err());
+        f.vault.primary(&f.host).forget().unwrap();
+        assert!(f.vault.primary(&f.host).read().unwrap().is_none());
     }
 }
 #[cfg(not(any(windows, target_os = "macos")))]

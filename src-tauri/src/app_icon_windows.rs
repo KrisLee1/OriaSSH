@@ -186,7 +186,8 @@ fn persist_icon<R: Runtime>(app: &AppHandle<R>, icon: ApplicationIcon) -> Result
         .app_data_dir()
         .map_err(|error| error.to_string())?;
     #[cfg(debug_assertions)]
-    let directory = std::env::var_os("ORIATUNNEL_TEST_DATA_DIR")
+    let directory = std::env::var_os("ORIASSH_TEST_DATA_DIR")
+        .or_else(|| std::env::var_os("ORIATUNNEL_TEST_DATA_DIR"))
         .map(PathBuf::from)
         .unwrap_or(directory);
     cache_shortcut_icon(&directory.join("taskbar-icons"), icon).map_err(|e| e.to_string())
@@ -211,7 +212,7 @@ fn synchronize_installed_shortcut_icon<R: Runtime>(
     let current_exe = std::env::current_exe()
         .map_err(|error| format!("Cannot resolve the running executable: {error}"))?;
 
-    let product_name = app.config().product_name.as_deref().unwrap_or("OriaTunnel");
+    let product_name = app.config().product_name.as_deref().unwrap_or("OriaSSH");
     synchronize_shortcuts(
         installed_shortcut_candidates(product_name),
         &current_exe,
@@ -474,12 +475,12 @@ mod tests {
     #[test]
     fn path_matching_is_case_insensitive_on_windows() {
         assert!(paths_match(
-            Path::new(r"C:\Program Files\OriaTunnel\oria-tunnel.exe"),
-            Path::new(r"c:\program files\oriatunnel\ORIA-TUNNEL.EXE"),
+            Path::new(r"C:\Program Files\OriaSSH\oria-ssh.exe"),
+            Path::new(r"c:\program files\oriassh\ORIA-SSH.EXE"),
         ));
         assert!(!paths_match(
-            Path::new(r"C:\Program Files\OriaTunnel\oria-tunnel.exe"),
-            Path::new(r"C:\Program Files\OtherApp\oria-tunnel.exe"),
+            Path::new(r"C:\Program Files\OriaSSH\oria-ssh.exe"),
+            Path::new(r"C:\Program Files\OtherApp\oria-ssh.exe"),
         ));
     }
 

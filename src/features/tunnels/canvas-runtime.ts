@@ -1,3 +1,5 @@
+import { equalJsonValue } from "@/lib/json-equal";
+import { displayedRoute } from "./rule-model";
 import { MarkerType, type Edge } from "@xyflow/react";
 import type { Rule, Runtime } from "@/types";
 import { canvasPortId } from "./canvas-state";
@@ -45,14 +47,33 @@ export function projectCardRuntimes(
     : next;
 }
 
+export function projectCanvasRoutes(
+  rules: Rule[],
+  runtimes: Runtime[],
+  before: Rule[],
+): Rule[] {
+  const live = new Map(runtimes.map((runtime) => [runtime.ruleId, runtime]));
+  const previous = new Map(before.map((rule) => [rule.id, rule]));
+  const next = rules.map((rule) => {
+    const value = displayedRoute(rule, live.get(rule.id));
+    const old = previous.get(rule.id);
+    return old && equalJsonValue(old, value) ? old : value;
+  });
+  return next.length === before.length &&
+    next.every((value, index) => before[index] === value)
+    ? before
+    : next;
+}
+
 export function projectCanvasEdges(
   rules: Rule[],
-  runtimes: ReadonlyMap<string, CardRuntime>,
+  runtimes: ReadonlyMap<string, Pick<Runtime, "status" | "sentPerSecond" | "receivedPerSecond">>,
   before: Edge[] = [],
 ): Edge[] {
   const saved = new Map(before.map((edge) => [edge.id, edge]));
   const next = rules.map((rule): Edge => {
     const visual = connectionVisual(rule, runtimes.get(rule.id));
+    const lightColor = rule.color || "var(--oria-color-accent)";
     const host = `host:${rule.hostId}`;
     const source = rule.kind === "R" ? host : "local";
     const target = rule.kind === "R" ? "local" : host;
@@ -61,6 +82,8 @@ export function projectCanvasEdges(
       previous?.source === source &&
       previous.target === target &&
       previous.data?.state === visual.state &&
+      previous.data.lightColor === lightColor &&
+      previous.ariaLabel === rule.name &&
       previous.style?.stroke === visual.color
     )
       return previous;
@@ -71,7 +94,8 @@ export function projectCanvasEdges(
       sourceHandle: canvasPortId(rule.id, "source"),
       targetHandle: canvasPortId(rule.id, "target"),
       type: "connection",
-      data: { state: visual.state },
+      ariaLabel: rule.name,
+      data: { state: visual.state, lightColor },
       markerEnd: { type: MarkerType.ArrowClosed, color: visual.color },
       className: `connection-edge connection-${visual.state}`,
       style: { strokeWidth: 1.5, stroke: visual.color },

@@ -80,7 +80,7 @@ mod platform {
             RegGetValueW(
                 HKEY_CURRENT_USER,
                 wide(key).as_ptr(),
-                wide("OriaTunnel").as_ptr(),
+                wide("OriaSSH").as_ptr(),
                 RRF_RT_REG_SZ,
                 std::ptr::null_mut(),
                 value.as_mut_ptr().cast(),
@@ -116,7 +116,7 @@ mod platform {
                 RegSetKeyValueW(
                     HKEY_CURRENT_USER,
                     wide(key).as_ptr(),
-                    wide("OriaTunnel").as_ptr(),
+                    wide("OriaSSH").as_ptr(),
                     REG_SZ,
                     data.as_ptr().cast(),
                     (data.len() * 2) as u32,
@@ -125,7 +125,7 @@ mod platform {
                 RegDeleteKeyValueW(
                     HKEY_CURRENT_USER,
                     wide(key).as_ptr(),
-                    wide("OriaTunnel").as_ptr(),
+                    wide("OriaSSH").as_ptr(),
                 )
             }
         };
@@ -150,11 +150,11 @@ mod platform {
             }
             // This UUID key is not an OS startup location. Never write the real Run key.
             let fixture = Fixture(format!(
-                r"Software\OriaTunnel.Validation.{}",
+                r"Software\OriaSSH.Validation.{}",
                 uuid::Uuid::new_v4()
             ));
             assert_ne!(fixture.0, KEY);
-            let command = r#""C:\isolated-fixture\OriaTunnel.exe" --background"#;
+            let command = r#""C:\isolated-fixture\OriaSSH.exe" --background"#;
             assert!(!read_at(&fixture.0, command).unwrap());
             set_at(&fixture.0, command, true).unwrap();
             assert!(read_at(&fixture.0, command).unwrap());
@@ -208,9 +208,8 @@ mod tests {
     #[test]
     fn quoted_executable_has_fixed_background_argument() {
         assert_eq!(
-            super::startup_command(std::path::Path::new(r"C:\Program Files\OriaTunnel.exe"))
-                .unwrap(),
-            r#""C:\Program Files\OriaTunnel.exe" --background"#
+            super::startup_command(std::path::Path::new(r"C:\Program Files\OriaSSH.exe")).unwrap(),
+            r#""C:\Program Files\OriaSSH.exe" --background"#
         );
         assert!(super::startup_command(std::path::Path::new("bad\"path")).is_err());
     }

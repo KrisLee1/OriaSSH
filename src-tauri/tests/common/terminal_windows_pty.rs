@@ -122,7 +122,7 @@ pub async fn spawn_shell(
     // Start the configured shell directly in ConPTY, as the SSH service does.
     // Keep all PowerShell profiles and history outside the runner's user directories.
     let command = if editor_shell.is_some() {
-        process.env("ORIATUNNEL_TEST_DATA_DIR", directory.path());
+        process.env("ORIASSH_TEST_DATA_DIR", directory.path());
         command.map(|command| command.replace("-NoLogo -NoExit ", "-NoLogo -NoProfile -NoExit "))
     } else {
         command

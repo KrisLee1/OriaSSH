@@ -20,6 +20,10 @@ const OUTPUT_LIMIT: usize = 256 * 1024;
 #[serde(rename_all = "camelCase")]
 pub struct Session {
     #[serde(default)]
+    pub service_revision: Option<String>,
+    #[serde(default)]
+    pub login_id: Option<String>,
+    #[serde(default)]
     pub local: bool,
     #[serde(default)]
     pub rule_id: Option<String>,
@@ -549,12 +553,11 @@ pub async fn execute(
         manager.change(&id, |s| s.phase = "running".into());
         (request.changed)();
         let (mut reader, writer) = channel.split();
+        let mut exit = None;
         let read = async {
             if !manager.output(&id, &early, &cancel).await {
                 return ("disconnected", Some("remoteUnknown".into()));
             }
-            let mut code = None;
-            let mut signal = None;
             loop {
                 match reader.wait().await {
                     Some(ChannelMsg::Data { data })
@@ -564,29 +567,44 @@ pub async fn execute(
                         }
                     }
                     Some(ChannelMsg::ExitStatus { exit_status }) => {
-                        code = Some(exit_status);
-                        manager.change(&id, |s| s.exit_code = code);
-                    }
-                    Some(ChannelMsg::ExitSignal { signal_name, .. }) => {
-                        signal = Some(format!("{signal_name:?}"));
-                        manager.change(&id, |s| s.exit_signal = signal.clone());
-                    }
-                    Some(ChannelMsg::Close) | None => {
-                        return if signal.is_some() {
-                            ("failed", Some("exitSignal".into()))
-                        } else if let Some(code) = code {
-                            if request.command.is_none() || request.success_codes.contains(&code) {
+                        manager.change(&id, |s| s.exit_code = Some(exit_status));
+                        exit = Some(
+                            if request.command.is_none()
+                                || request.success_codes.contains(&exit_status)
+                            {
                                 ("exited", None)
                             } else {
                                 ("failed", Some("exitCode".into()))
-                            }
-                        } else {
-                            ("interrupted", Some("remoteUnknown".into()))
-                        }
+                            },
+                        );
+                        break;
+                    }
+                    Some(ChannelMsg::ExitSignal { signal_name, .. }) => {
+                        manager.change(&id, |s| s.exit_signal = Some(format!("{signal_name:?}")));
+                        exit = Some(("failed", Some("exitSignal".into())));
+                        break;
+                    }
+                    Some(ChannelMsg::Close) | None => {
+                        return ("interrupted", Some("remoteUnknown".into()));
                     }
                     _ => {}
                 }
             }
+            let _ = tokio::time::timeout(crate::commands::EXIT_DRAIN_TIME, async {
+                while let Some(message) = reader.wait().await {
+                    match message {
+                        ChannelMsg::Data { data } | ChannelMsg::ExtendedData { data, .. } => {
+                            if !manager.output(&id, &data, &cancel).await {
+                                break;
+                            }
+                        }
+                        ChannelMsg::Eof | ChannelMsg::Close => break,
+                        _ => {}
+                    }
+                }
+            })
+            .await;
+            exit.clone().expect("remote exit received")
         };
         let mut sizes = manager.size_receiver(&id).unwrap();
         let write = async {
@@ -608,14 +626,15 @@ pub async fn execute(
                 }
             }
         };
-        let deadline = async {
-            if let Some(seconds) = request.timeout_secs.filter(|seconds| *seconds > 0) {
-                tokio::time::sleep(Duration::from_secs(seconds)).await;
-            } else {
-                std::future::pending::<()>().await;
+        let outcome = tokio::select! {
+            biased;
+            result = read => result,
+            result = write => result,
+            _ = crate::commands::execution_deadline(request.timeout_secs.unwrap_or_default()) => {
+                ("timedOut", Some("remoteUnknown".into()))
             }
         };
-        tokio::select! {result=read=>result,result=write=>result,_=deadline=>("timedOut",Some("remoteUnknown".into()))}
+        exit.unwrap_or(outcome)
     };
     let (phase, error) = tokio::select! {biased;_=cancel.cancelled()=>("disconnected",Some("remoteUnknown".into())),result=result=>result};
     connection.close().await;
@@ -635,6 +654,8 @@ mod tests {
             client_id: "owner".into(),
             host_id: "host".into(),
             route_host_ids: vec!["host".into()],
+            login_id: None,
+            service_revision: None,
             host_name: "test".into(),
             endpoint: "test".into(),
             service_id: None,

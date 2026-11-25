@@ -12,7 +12,7 @@ import { control, port, until } from "./vnc-native-control.mjs";
 import { watchVncFrames } from "./vnc-screencast.mjs";
 
 const exe = fs.realpathSync(
-  process.argv[2] ?? "src-tauri/target/debug/oria-tunnel.exe",
+  process.argv[2] ?? "src-tauri/target/debug/oria-ssh.exe",
 );
 const compositor = process.argv.includes("--compositor");
 if (compositor) {
@@ -40,8 +40,8 @@ const app = spawn(exe, ["vnc://127.0.0.1:" + server.port], {
   stdio: "ignore",
   env: {
     ...process.env,
-    ORIATUNNEL_TEST_DATA_DIR: path.join(profile, "data"),
-    ORIATUNNEL_TEST_SSH_CONFIG: ssh,
+    ORIASSH_TEST_DATA_DIR: path.join(profile, "data"),
+    ORIASSH_TEST_SSH_CONFIG: ssh,
     WEBVIEW2_USER_DATA_FOLDER: path.join(profile, "webview"),
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:
       "--remote-debugging-address=127.0.0.1 --remote-debugging-port=" + debug,

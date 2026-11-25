@@ -1,4 +1,5 @@
 import { PageEmptyState } from "@/components/page-empty-state";
+import { formatNativeMessage } from "@/lib/native-message";
 import { FileDirectoryEmpty } from "./file-directory-empty";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -52,7 +53,7 @@ import {
   FolderSync,
   Server,
   ArrowRightLeft,
-  HardDrive,
+  Monitor,
   EyeOff,
   ArrowDownAZ,
   Copy,
@@ -112,9 +113,15 @@ import {
 } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
 import { AuthenticationField } from "@/features/hosts/authentication-field";
+import {
+  defaultLoginId,
+  resolvedDefaultLogin,
+  resolvedLogin,
+} from "@/features/hosts/login-identities";
+import { HostIcon } from "@/features/hosts/host-icon";
 import { useNativeFileDrop } from "@/hooks/use-native-file-drop";
 import * as bridge from "@/lib/bridge";
-import type { Snapshot as AppSnapshot } from "@/types";
+import type { Host, Snapshot as AppSnapshot } from "@/types";
 import {
   api,
   active,
@@ -129,7 +136,18 @@ import {
   type TransferFolder,
 } from "./api";
 import "./files.css";
-import { recoverTransfer, type FileSide } from "./recover-transfer";
+import { connectedTransferSession, recoverTransfer, type FileSide } from "./recover-transfer";
+
+function fileAuthenticationHosts(session: Session, hosts: Host[]) {
+  return session.route.flatMap((id) => {
+    const host = hosts.find((candidate) => candidate.id === id);
+    const login = id === session.hostId
+      ? resolvedLogin(host, session.loginId ?? defaultLoginId(host))
+      : host;
+    return login ? [login] : [];
+  });
+}
+
 const Context = createContext<{ open: (host?: string) => void; count: number }>(
   { open: () => {}, count: 0 },
 );
@@ -280,7 +298,7 @@ export function FileWorkspaceProvider({
         toast.add({
           type: "error",
           title: t("title"),
-          description: t(message, { defaultValue: message }),
+          description: t(message, { defaultValue: formatNativeMessage(message) }),
           timeout: 6000,
         });
     },
@@ -315,6 +333,8 @@ export function FileWorkspaceProvider({
       secrets: Record<string, string> = {},
       remember: string[] = [],
       side: "local" | "remote" = "remote",
+      loginId = defaultLoginId(data.hosts.find((host) => host.id === id)),
+      expectedRouteKey?: string,
     ) => {
       const generation = ++connectionGeneration.current[side];
       const waiting = waitingConnection.current;
@@ -333,7 +353,7 @@ export function FileWorkspaceProvider({
       dirs.current[side] = null;
       let opened = false;
       await perform(async () => {
-        const session = await api.connect(id, secrets, remember);
+        const session = await api.connect(id, secrets, remember, loginId, expectedRouteKey);
         if (generation !== connectionGeneration.current[side]) {
           await api.disconnect(session);
           return;
@@ -358,7 +378,7 @@ export function FileWorkspaceProvider({
       if (side === "remote" && pendingRemote.current === generation)
         pendingRemote.current = null;
     },
-    [perform, finishConnection],
+    [data.hosts, perform, finishConnection],
   );
   useEffect(() => {
     mounted.current = true;
@@ -402,11 +422,7 @@ export function FileWorkspaceProvider({
       const canPrompt =
         (session.phase === "credentialsRequired" ||
           session.error === "authenticationFailed") &&
-        session.route.some((id) =>
-          data.hosts.some(
-            (host) => host.id === id && host.authMethod !== "agent",
-          ),
-        );
+        fileAuthenticationHosts(session, data.hosts).some((host) => host.authMethod !== "agent");
       if (!canPrompt) finishConnection();
     }
   }, [snapshot.sessions, sid, sourceSid, data.hosts, finishConnection]);
@@ -434,9 +450,7 @@ export function FileWorkspaceProvider({
       if (
         (session.phase === "credentialsRequired" ||
           session.error === "authenticationFailed") &&
-        session.route.some((id) =>
-          data.hosts.some((h) => h.id === id && h.authMethod !== "agent"),
-        )
+        fileAuthenticationHosts(session, data.hosts).some((h) => h.authMethod !== "agent")
       ) {
         if (auth) continue;
         notifiedSessions.current.add(key);
@@ -477,16 +491,25 @@ export function FileWorkspaceProvider({
         id = host || preferredHost;
       }
       if (id) {
+        const selectedHost = data.hosts.find((host) => host.id === id);
+        const login = resolvedDefaultLogin(selectedHost);
+        const loginId = defaultLoginId(selectedHost);
         const existing = stateRef.current.sessions.find(
-          (s) => s.hostId === id && s.phase === "connected",
+          (s) => login &&
+            s.hostId === id && s.phase === "connected" &&
+            s.loginId === loginId && s.user === login.user,
         );
         if (existing) {
+          connectionGeneration.current.remote++;
+          pendingRemote.current = null;
+          if (waitingConnection.current?.side === "remote") finishConnection();
+          if (existing.id !== sid) dirs.current.remote = null;
           setHost(id);
           setSid(existing.id);
         } else void connect(id);
       }
     },
-    [connect, preferredHost, host, open, viewer, sid, current],
+    [connect, data.hosts, finishConnection, preferredHost, host, open, viewer, sid, current],
   );
   const transfer = useCallback(
     async (ids: string[], target: string) => {
@@ -574,20 +597,20 @@ export function FileWorkspaceProvider({
     setBusy(false);
   };
   const controlTask = async (task: Task, a: string, applyAll = false) => {
-    const { id, hostId } = task;
+    const { id } = task;
     if (a === "openTarget") {
       await api.openTarget(id);
       return;
     }
-    const s = snapshot.sessions.find(
-      (s) => s.hostId === hostId && s.phase === "connected",
+    const primary = task.targetRemote ?? task.sourceRemote ?? task;
+    const s = connectedTransferSession(
+      snapshot.sessions, primary.hostId, primary.sessionId,
+      primary.routeKey,
     );
     const source =
       task.sourceRemote &&
-      snapshot.sessions.find(
-        (session) =>
-          session.hostId === task.sourceRemote!.hostId &&
-          session.phase === "connected",
+      connectedTransferSession(
+        snapshot.sessions, task.sourceRemote.hostId, task.sourceRemote.sessionId, task.sourceRemote.routeKey,
       );
     if (a === "skip" || a === "keep" || a === "replace") {
       await api.resolveConflict(id, a, applyAll, s?.id, source?.id);
@@ -618,11 +641,12 @@ export function FileWorkspaceProvider({
               action,
               async (hostId, savedId, side, reconnect) => {
                 if (!mounted.current) return;
-                const sessions = stateRef.current.sessions.filter(
-                  (s) => s.hostId === hostId && s.phase === "connected",
+                const endpoint = side === "local"
+                  ? record.sourceRemote
+                  : record.targetRemote ?? record.sourceRemote ?? record;
+                const existing = connectedTransferSession(
+                  stateRef.current.sessions, hostId, savedId, endpoint?.routeKey,
                 );
-                const existing =
-                  sessions.find((s) => s.id === savedId) ?? sessions[0];
                 if (!reconnect && existing) return existing.id;
                 return new Promise<string | undefined>((finish) => {
                   waitingConnection.current = {
@@ -631,7 +655,7 @@ export function FileWorkspaceProvider({
                     side,
                     finish,
                   };
-                  void connect(hostId, {}, [], side);
+                  void connect(hostId, {}, [], side, undefined, endpoint?.routeKey);
                 });
               },
               api.control,
@@ -697,6 +721,9 @@ export function FileWorkspaceProvider({
           const selectedHost = left ? sourceHost : host;
           const session = left ? sourceSid : sid;
           const status = left ? sourceCurrent : current;
+          const directoryKey = JSON.stringify([
+            side, selectedHost, status?.loginId, status?.user,
+          ]);
           const ready = !remote || (left ? sourceConnected : connected);
           const otherRemote = left || !!sourceHost;
           const otherReady = left ? connected : !sourceHost || sourceConnected;
@@ -717,7 +744,7 @@ export function FileWorkspaceProvider({
                 (!remote || !otherRemote || sourceHost !== host)
               }
               initialPath={
-                savedDirectories.current[side + ":" + selectedHost] ||
+                savedDirectories.current[directoryKey] ||
                 (!remote ? initialLocalDirectory : undefined)
               }
               refresh={refresh}
@@ -767,8 +794,7 @@ export function FileWorkspaceProvider({
               onDirectory={(directory) => {
                 dirs.current[side] = directory;
                 if (!remote) saveLocalDirectory(directory.path);
-                savedDirectories.current[side + ":" + selectedHost] =
-                  directory.path;
+                savedDirectories.current[directoryKey] = directory.path;
               }}
               onPreview={setPreview}
               onAction={edit}
@@ -860,10 +886,7 @@ export function FileWorkspaceProvider({
               {t(auth.error)}
             </p>
           )}
-          {auth?.route
-            .map((id) => data.hosts.find((h) => h.id === id))
-            .filter((h) => !!h)
-            .map((h) => (
+          {auth && fileAuthenticationHosts(auth, data.hosts).map((h) => (
               <AuthenticationField
                 key={h.id}
                 host={h}
@@ -878,11 +901,14 @@ export function FileWorkspaceProvider({
                   )
                 }
               />
-            ))}
+          ))}
           <Button
             onClick={() => {
               if (auth)
-                void connect(auth.hostId, secrets, remember, authSide.current);
+                void connect(
+                  auth.hostId, secrets, remember, authSide.current, auth.loginId,
+                  auth.routeKey ?? undefined,
+                );
               setAuth(null);
               setSecrets({});
             }}
@@ -951,6 +977,36 @@ export function FileWorkspaceProvider({
     </Context.Provider>
   );
 }
+function FileEndpointLabel({
+  label,
+  host,
+  user,
+}: {
+  label: string;
+  host: Host | null;
+  user?: string;
+}) {
+  return (
+    <span
+      className="flex min-w-0 items-center gap-2"
+      title={user ? `${label} · ${user}` : label}
+    >
+      <span
+        aria-hidden="true"
+        className="flex size-5 shrink-0 items-center justify-center"
+      >
+        {host ? <HostIcon appearance={host.appearance} /> : <Monitor />}
+      </span>
+      <span className="min-w-0 truncate">{label}</span>
+      {user && (
+        <span className="min-w-0 max-w-1/2 shrink-0 truncate text-muted-foreground">
+          · {user}
+        </span>
+      )}
+    </span>
+  );
+}
+
 function FileEndpointTitle({
   hosts,
   host,
@@ -972,14 +1028,27 @@ function FileEndpointTitle({
 }) {
   const { t } = useTranslation("files");
   const local = allowLocal && !host;
+  const value = local ? ":computer:" : host || null;
   const items = [
-    ...(allowLocal ? [{ value: ":computer:", label: t("local") }] : []),
-    ...hosts.map((host) => ({ value: host.id, label: host.name })),
+    ...(allowLocal
+      ? [{ value: ":computer:", label: t("local"), host: null, user: undefined }]
+      : []),
+    ...hosts.map((host) => {
+      const user = resolvedDefaultLogin(host)?.user;
+      return { value: host.id, label: user ? `${host.name} · ${user}` : host.name, host, user };
+    }),
   ];
+  const selected = items.find((item) => item.value === value);
+  const activeUser = status &&
+    ["connecting", "authenticating", "verifying-host", "connected"].includes(status.phase)
+    ? status.user
+    : undefined;
+  const selectedUser = activeUser ?? selected?.user;
+  const selectedName = selected?.host?.name ?? selected?.label;
   return (
     <>
       <Select
-        value={local ? ":computer:" : host}
+        value={value}
         items={items}
         onValueChange={(value) => {
           if (value) onChange(value === ":computer:" ? "" : value);
@@ -987,25 +1056,34 @@ function FileEndpointTitle({
       >
         <SelectTrigger
           className="files-host-select"
-          aria-label={t("chooseHost")}
+          aria-label={[t("chooseHost"), selectedName, selectedUser]
+            .filter(Boolean)
+            .join(" · ")}
         >
-          <SelectValue placeholder={t("chooseHost")} />
+          <SelectValue placeholder={t("chooseHost")}>
+            {selected && (
+              <FileEndpointLabel
+                label={selected.host?.name ?? selected.label}
+                host={selected.host}
+                user={selectedUser}
+              />
+            )}
+          </SelectValue>
         </SelectTrigger>
         <SelectContent>
-          {allowLocal && (
-            <SelectItem value=":computer:">
-              <HardDrive />
-              {t("local")}
-            </SelectItem>
-          )}
-          {hosts.map((host) => (
+          {items.map((item) => (
             <SelectItem
-              key={host.id}
-              value={host.id}
-              disabled={host.id === excludeHost}
+              key={item.value}
+              value={item.value}
+              label={item.label}
+              className="[&>*]:min-w-0"
+              disabled={item.value === excludeHost}
             >
-              <Server />
-              {host.name}
+              <FileEndpointLabel
+                label={item.host?.name ?? item.label}
+                host={item.host}
+                user={item.user}
+              />
             </SelectItem>
           ))}
         </SelectContent>
@@ -1079,11 +1157,12 @@ export function FilePane(p: PaneProps) {
     [descending, setDescending] = useState(false),
     [selected, setSelected] = useState<string[]>([]),
     [loading, setLoading] = useState(false),
-    [readError, setReadError] = useState<{ path: string; message: string }>(),
+    [readError, setReadError] = useState<{ path: string; message: string; record: boolean; historyIndex?: number }>(),
     [nativeTarget, setNativeTarget] = useState<string>(),
     [scroll, setScroll] = useState(0),
     [cols, setCols] = useState(3),
     [viewportHeight, setViewportHeight] = useState(400);
+  const selectedIds = useMemo(() => new Set(selected), [selected]);
   const root = useRef<HTMLDivElement>(null),
     viewport = useRef<HTMLDivElement>(null),
     generation = useRef(0),
@@ -1101,7 +1180,7 @@ export function FilePane(p: PaneProps) {
     typeof navigator !== "undefined" &&
     /Mac|iPhone|iPad/.test(navigator.platform);
   const load = useCallback(
-    async (next: string, record = true) => {
+    async (next: string, record = true, historyIndex?: number) => {
       const g = ++generation.current;
       setLoading(true);
       setReadError(undefined);
@@ -1113,6 +1192,7 @@ export function FilePane(p: PaneProps) {
         setScroll(0);
         p.onDirectory(d);
         if (viewport.current) viewport.current.scrollTop = 0;
+        if (historyIndex !== undefined) cursor.current = historyIndex;
         if (!record && cursor.current < 0) {
           history.current = [d.path];
           cursor.current = 0;
@@ -1125,7 +1205,7 @@ export function FilePane(p: PaneProps) {
         return true;
       } catch (e) {
         if (g === generation.current) {
-          setReadError({ path: next, message: String(e) });
+          setReadError({ path: next, message: String(e), record, historyIndex });
           p.onError(String(e));
         }
         return false;
@@ -1184,6 +1264,7 @@ export function FilePane(p: PaneProps) {
     () => sections.flatMap((section) => section.ids),
     [sections],
   );
+  const navigateHistory = (index: number) => load(history.current[index], false, index);
   const changeGrouping = (value: boolean) => {
     setGrouped(value);
     localStorage.setItem(
@@ -1285,7 +1366,7 @@ export function FilePane(p: PaneProps) {
       .catch((error) => p.onError(String(error)));
   };
   const action = (kind: ModalAction["kind"], e?: Entry) => {
-    const item = e || items.find((i) => selected.includes(i.id));
+    const item = e || items.find((i) => selectedIds.has(i.id));
     if ((kind === "mkdir" || kind === "createText") && dir) {
       p.onAction({
         kind,
@@ -1298,14 +1379,14 @@ export function FilePane(p: PaneProps) {
         kind,
         id: item.id,
         name:
-          kind === "delete" && selected.includes(item.id) && selected.length > 1
+          kind === "delete" && selectedIds.has(item.id) && selected.length > 1
             ? items
-                .filter((e) => selected.includes(e.id))
+                .filter((e) => selectedIds.has(e.id))
                 .map((e) => e.name)
                 .join(", ")
             : item.name,
         ids:
-          kind === "delete" && selected.includes(item.id)
+          kind === "delete" && selectedIds.has(item.id)
             ? selected
             : undefined,
         entry: item,
@@ -1318,7 +1399,7 @@ export function FilePane(p: PaneProps) {
       {e ? (
         <>
           <ContextMenuItem
-            disabled={selected.includes(e.id) && selected.length > 1}
+            disabled={selectedIds.has(e.id) && selected.length > 1}
             onClick={() => openEntry(e)}
           >
             {e.kind === "directory" ? (
@@ -1350,7 +1431,7 @@ export function FilePane(p: PaneProps) {
           <ContextMenuItem
             disabled={!p.canTransfer || dir?.path === ":computer:"}
             onClick={() =>
-              p.onTransfer(selected.includes(e.id) ? selected : [e.id])
+              p.onTransfer(selectedIds.has(e.id) ? selected : [e.id])
             }
           >
             {p.transferKind === "relay" ? (
@@ -1371,7 +1452,7 @@ export function FilePane(p: PaneProps) {
                   .then((ids) => {
                     if (ids[0])
                       p.onTransfer(
-                        selected.includes(e.id) ? selected : [e.id],
+                        selectedIds.has(e.id) ? selected : [e.id],
                         ids[0],
                       );
                   })
@@ -1386,7 +1467,7 @@ export function FilePane(p: PaneProps) {
           <ContextMenuItem
             disabled={
               dir?.path === ":computer:" ||
-              (selected.includes(e.id) && selected.length > 1)
+              (selectedIds.has(e.id) && selected.length > 1)
             }
             onClick={() => action("rename", e)}
           >
@@ -1395,8 +1476,8 @@ export function FilePane(p: PaneProps) {
           </ContextMenuItem>
           <ContextMenuItem
             onClick={() => {
-              const selectedItems = selected.includes(e.id)
-                ? items.filter((item) => selected.includes(item.id))
+              const selectedItems = selectedIds.has(e.id)
+                ? items.filter((item) => selectedIds.has(item.id))
                 : [e];
               copyPaths(selectedItems);
             }}
@@ -1528,7 +1609,7 @@ export function FilePane(p: PaneProps) {
           size="icon-sm"
           title={t("back")}
           disabled={cursor.current <= 0}
-          onClick={() => void load(history.current[--cursor.current], false)}
+          onClick={() => void navigateHistory(cursor.current - 1)}
         >
           <ArrowLeft />
         </Button>
@@ -1537,7 +1618,7 @@ export function FilePane(p: PaneProps) {
           size="icon-sm"
           title={t("forward")}
           disabled={cursor.current >= history.current.length - 1}
-          onClick={() => void load(history.current[++cursor.current], false)}
+          onClick={() => void navigateHistory(cursor.current + 1)}
         >
           <ArrowRight />
         </Button>
@@ -1664,7 +1745,7 @@ export function FilePane(p: PaneProps) {
                   if (shortcut === "selectAll") setSelected(ordered);
                   if (shortcut === "copyPath")
                     copyPaths(
-                      items.filter((item) => selected.includes(item.id)),
+                      items.filter((item) => selectedIds.has(item.id)),
                     );
                   if (shortcut === "parent" && dir) void load(dir.parent);
                   if (shortcut === "delete" && dir?.path !== ":computer:")
@@ -1765,7 +1846,7 @@ export function FilePane(p: PaneProps) {
                         dateField === "created"
                           ? e.created
                           : e.modified || null;
-                      const chosen = selected.includes(e.id);
+                      const chosen = selectedIds.has(e.id);
                       return (
                         <ContextMenu key={e.id}>
                           <ContextMenuTrigger
@@ -1938,7 +2019,7 @@ export function FilePane(p: PaneProps) {
                     showHidden={() => setHidden(true)}
                     createFolder={() => action("mkdir")}
                     retry={() =>
-                      void load(readError?.path ?? p.initialPath ?? "", false)
+                      void load(readError?.path ?? p.initialPath ?? "", readError?.record ?? false, readError?.historyIndex)
                     }
                   />
                 </div>

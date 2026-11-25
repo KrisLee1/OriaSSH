@@ -4,7 +4,7 @@ import CoreGraphics
 
 func run() throws {
   let bundleID = CommandLine.arguments[1]
-  guard bundleID.hasPrefix("com.oria-tunnel.v5."),
+  guard bundleID.hasPrefix("com.oria-ssh.v5."),
     let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first,
     app.isActive, CGPreflightPostEventAccess()
   else {

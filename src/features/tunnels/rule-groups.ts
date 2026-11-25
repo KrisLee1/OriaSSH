@@ -1,4 +1,4 @@
-import type { Host, Rule } from "@/types";
+import type { Host, RemoteService, Rule } from "@/types";
 
 export interface RuleGroup {
   id: string;
@@ -27,9 +27,13 @@ export function groupRulesByHost(rules: Rule[], hosts: Host[]): RuleGroup[] {
 
 export function canvasHostGroups(rules: Rule[], hosts: Host[]): RuleGroup[] {
   const groups = groupRulesByHost(rules, hosts);
-  for (const host of hosts)
-    if (!groups.some((group) => group.host?.id === host.id))
-      groups.push({ id: `host:${host.id}`, host, rules: [] });
+  const grouped = new Set(groups.map(group => group.id));
+  for (const host of hosts) {
+    const id = `host:${host.id}`;
+    if (grouped.has(id)) continue;
+    groups.push({ id, host, rules: [] });
+    grouped.add(id);
+  }
   return groups;
 }
 
@@ -37,8 +41,15 @@ type Point = { x: number; y: number };
 export function groupPositions(
   groups: RuleGroup[],
   saved: Record<string, Point>,
+  services: RemoteService[] = [],
 ) {
   const local = saved.local || { x: 0, y: 0 };
+  const serviceRows = new Map<string, number>();
+  for (const service of services) {
+    for (const hostId of service.hostIds ?? []) {
+      serviceRows.set(hostId, (serviceRows.get(hostId) ?? 0) + 1);
+    }
+  }
   const bottom = { left: local.y, right: local.y };
   return Object.fromEntries(
     groups.map((group) => {
@@ -47,12 +58,15 @@ export function groupPositions(
           ? "left"
           : "right";
       const position = saved[group.id] || {
-        x: local.x + (side === "left" ? -480 : 480),
+        x: local.x + (side === "left" ? -540 : 340),
         y: bottom[side],
       };
       bottom[side] = Math.max(
         bottom[side],
-        position.y + 150 + group.rules.length * 175 + 70,
+        position.y +
+          168 +
+          group.rules.length * 120 +
+          (serviceRows.get(group.host?.id ?? "") ?? 0) * 150,
       );
       return [group.id, position];
     }),

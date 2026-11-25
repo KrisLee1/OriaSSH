@@ -5,6 +5,7 @@ import {
   useContext,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -39,9 +40,15 @@ const Context = createContext<{
     next: SavedCommand | null,
   ) => Promise<void>;
   manage: () => void;
+  loaded: boolean;
+  readError: string;
 } | null>(null);
 export const useSavedCommands = () => useContext(Context);
-export function SavedCommandsButton() {
+export function SavedCommandsButton({
+  openSettings,
+}: {
+  openSettings?: () => void;
+}) {
   const library = useSavedCommands();
   const { t } = useTranslation("terminal");
   return (
@@ -52,7 +59,7 @@ export function SavedCommandsButton() {
       size="icon-sm"
       title={t("savedCommands")}
       aria-label={t("savedCommands")}
-      onClick={library?.manage}
+      onClick={openSettings ?? library?.manage}
     >
       <BookText aria-hidden="true" />
     </Button>
@@ -66,20 +73,14 @@ export function SavedCommandsProvider({
   active: boolean;
   children: ReactNode;
 }) {
-  const { t } = useTranslation("terminal");
   const [library, setLibrary] = useState<SavedCommandLibrary>({
     revision: 0,
     entries: [],
   });
   const [opened, setOpened] = useState(false);
-  const [editor, setEditor] = useState<Editor | null>(null);
-  const [query, setQuery] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [readError, setReadError] = useState("");
   const [loaded, setLoaded] = useState(false);
   const invoker = useRef<HTMLElement | null>(null);
-  const pending = useRef(false);
-  const form = useId();
   const accept = useCallback((next: SavedCommandLibrary) => {
     setLibrary((previous) =>
       previous.revision <= next.revision ? next : previous,
@@ -89,9 +90,9 @@ export function SavedCommandsProvider({
   const refresh = useCallback(async () => {
     try {
       accept(await invoke<SavedCommandLibrary>("saved_terminal_commands"));
-      setError("");
+      setReadError("");
     } catch {
-      setError("libraryReadError");
+      setReadError("libraryReadError");
     }
   }, [accept]);
   useEffect(() => {
@@ -121,28 +122,11 @@ export function SavedCommandsProvider({
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
-    setQuery("");
-    setError("");
     setOpened(true);
     void refresh();
   };
-  const edit = (entry: SavedCommand) => {
-    setError("");
-    setEditor({
-      previous: entry,
-      command: entry.command,
-      keywords: { tags: entry.keywords, text: "" },
-    });
-  };
   const close = () => {
-    if (pending.current) return;
-    if (editor) {
-      setEditor(null);
-      setError("");
-      return;
-    }
     setOpened(false);
-    setEditor(null);
     requestAnimationFrame(() => {
       if (invoker.current?.isConnected)
         invoker.current.focus({ preventScroll: true });
@@ -171,13 +155,83 @@ export function SavedCommandsProvider({
       );
     }
   };
+  return (
+    <Context.Provider
+      value={{
+        entries: library.entries,
+        persist,
+        manage: open,
+        loaded,
+        readError,
+      }}
+    >
+      {children}
+      {opened && <SavedCommandsLibrary close={close} />}
+    </Context.Provider>
+  );
+}
+
+export function SavedCommandsLibrary({
+  close,
+  onActivityChange,
+}: {
+  close?: () => void;
+  onActivityChange?: (activity: "idle" | "editing" | "saving") => void;
+}) {
+  const { t } = useTranslation("terminal");
+  const library = useSavedCommands();
+  const [editor, setEditor] = useState<Editor | null>(null);
+  const [query, setQuery] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const pending = useRef(false);
+  const form = useId();
+  const commandInput = useRef<HTMLTextAreaElement>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
+  const editTrigger = useRef<string | null>(null);
+  const editorId = editor?.previous.id;
+  const activity = busy ? "saving" : editor ? "editing" : "idle";
+  useLayoutEffect(() => {
+    onActivityChange?.(activity);
+  }, [activity, onActivityChange]);
+  useLayoutEffect(() => {
+    if (editorId) {
+      commandInput.current?.focus();
+    } else if (editTrigger.current) {
+      (
+        document.getElementById(editTrigger.current) ?? searchInput.current
+      )?.focus();
+      editTrigger.current = null;
+    }
+  }, [editorId]);
+
+  if (!library) return null;
+
+  const edit = (entry: SavedCommand, triggerId: string) => {
+    editTrigger.current = triggerId;
+    setError("");
+    setEditor({
+      previous: entry,
+      command: entry.command,
+      keywords: { tags: entry.keywords, text: "" },
+    });
+  };
+  const dismiss = () => {
+    if (pending.current) return;
+    if (editor) {
+      setEditor(null);
+      setError("");
+    } else {
+      close?.();
+    }
+  };
   const change = async (previous: SavedCommand, next: SavedCommand | null) => {
     if (pending.current) return;
     pending.current = true;
     setBusy(true);
     setError("");
     try {
-      await persist(previous, next);
+      await library.persist(previous, next);
       setEditor(null);
     } catch (e) {
       setError((e as Error).message);
@@ -191,157 +245,162 @@ export function SavedCommandsProvider({
       value.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
     ),
   );
-  return (
-    <Context.Provider
-      value={{
-        entries: library.entries,
-        manage: () => {
-          open();
-          setEditor(null);
-        },
-        persist,
-      }}
-    >
-      {children}
-      {opened && (
-        <Modal
-          key={editor ? "edit" : "list"}
-          title={t(editor ? "saveCommand" : "savedCommands")}
-          close={close}
+  const title = t(editor ? "saveCommand" : "savedCommands");
+  const visibleError = error || library.readError;
+  const Actions = close ? ModalActions : LibraryActions;
+  const body = (
+    <>
+      {editor ? (
+        <form
+          id={form}
+          data-command-library-editor=""
+          onSubmit={(e) => {
+            e.preventDefault();
+            const keywords = selectedKeywords(editor.keywords);
+            if (!keywords.length || !editor.command.trim()) return;
+            void change(editor.previous, {
+              id: editor.previous.id,
+              command: editor.command,
+              keywords,
+            });
+          }}
         >
-          {editor ? (
-            <form
-              id={form}
-              data-command-library-editor=""
-              onSubmit={(e) => {
-                e.preventDefault();
-                const keywords = selectedKeywords(editor.keywords);
-                if (!keywords.length || !editor.command.trim()) return;
-                void change(editor.previous, {
-                  id: editor.previous.id,
-                  command: editor.command,
-                  keywords,
-                });
-              }}
+          <Field label={t("command")}>
+            <Textarea
+              ref={commandInput}
+              value={editor.command}
+              required
+              onChange={(e) =>
+                setEditor({ ...editor, command: e.target.value })
+              }
+            />
+          </Field>
+          <div className="field" role="group" aria-label={t("commandKeywords")}>
+            <span>{t("commandKeywords")}</span>
+            <CommandKeywords
+              entries={library.entries}
+              draft={editor.keywords}
+              onChange={(keywords) => setEditor({ ...editor, keywords })}
+            />
+          </div>
+          <Actions>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy}
+              onClick={dismiss}
             >
-              <Field label={t("command")}>
-                <Textarea
-                  value={editor.command}
-                  required
-                  onChange={(e) =>
-                    setEditor({ ...editor, command: e.target.value })
-                  }
-                />
-              </Field>
+              {t("cancel")}
+            </Button>
+            <Button
+              type="submit"
+              form={form}
+              disabled={
+                busy ||
+                !editor.command.trim() ||
+                !selectedKeywords(editor.keywords).length
+              }
+            >
+              {t("save", { ns: "tunnel" })}
+            </Button>
+          </Actions>
+        </form>
+      ) : (
+        <>
+          <SearchInput
+            ref={searchInput}
+            autoFocus={Boolean(close)}
+            value={query}
+            aria-label={t("searchLibrary")}
+            placeholder={t("searchLibrary")}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <div data-command-library-list="" className="grid gap-2.5">
+            {filtered.map((entry) => (
               <div
-                className="field"
-                role="group"
-                aria-label={t("commandKeywords")}
+                className="themed-surface flex min-w-0 items-center gap-1 rounded-xl border border-border px-3 py-2.5"
+                key={entry.id}
               >
-                <span>{t("commandKeywords")}</span>
-                <CommandKeywords
-                  entries={library.entries}
-                  draft={editor.keywords}
-                  onChange={(keywords) => setEditor({ ...editor, keywords })}
-                />
-              </div>
-              <ModalActions>
+                <div className="min-w-0 flex-1">
+                  <code className="block whitespace-pre-wrap break-all">
+                    {entry.command}
+                  </code>
+                  <span className="text-xs text-muted-foreground">
+                    {entry.keywords.join(" · ")}
+                  </span>
+                </div>
                 <Button
-                  type="button"
-                  variant="outline"
+                  id={`${form}-edit-${entry.id}`}
+                  variant="ghost"
+                  size="icon-sm"
                   disabled={busy}
-                  onClick={close}
+                  aria-label={t("edit", { ns: "tunnel" })}
+                  title={t("edit", { ns: "tunnel" })}
+                  onClick={(event) => edit(entry, event.currentTarget.id)}
                 >
-                  {t("cancel")}
+                  <Pencil />
                 </Button>
                 <Button
-                  type="submit"
-                  form={form}
-                  disabled={
-                    busy ||
-                    !editor.command.trim() ||
-                    !selectedKeywords(editor.keywords).length
-                  }
+                  variant="ghost"
+                  size="icon-sm"
+                  disabled={busy}
+                  aria-label={t("delete", { ns: "tunnel" })}
+                  title={t("delete", { ns: "tunnel" })}
+                  onClick={() => void change(entry, null)}
                 >
-                  {t("save", { ns: "tunnel" })}
+                  <Trash2 />
                 </Button>
-              </ModalActions>
-            </form>
-          ) : (
-            <>
-              <SearchInput
-                autoFocus
-                value={query}
-                aria-label={t("searchLibrary")}
-                placeholder={t("searchLibrary")}
-                onChange={(e) => setQuery(e.target.value)}
-              />
-              <div data-command-library-list="" className="grid gap-2">
-                {filtered.map((entry) => (
-                  <div
-                    className="flex min-w-0 items-center gap-1 border-b border-border py-2"
-                    key={entry.id}
-                  >
-                    <div className="min-w-0 flex-1">
-                      <code className="block whitespace-pre-wrap break-all">
-                        {entry.command}
-                      </code>
-                      <span className="text-xs text-muted-foreground">
-                        {entry.keywords.join(" · ")}
-                      </span>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      disabled={busy}
-                      aria-label={t("edit", { ns: "tunnel" })}
-                      title={t("edit", { ns: "tunnel" })}
-                      onClick={() => edit(entry)}
-                    >
-                      <Pencil />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      disabled={busy}
-                      aria-label={t("delete", { ns: "tunnel" })}
-                      title={t("delete", { ns: "tunnel" })}
-                      onClick={() => void change(entry, null)}
-                    >
-                      <Trash2 />
-                    </Button>
-                  </div>
-                ))}
-                {loaded && !filtered.length && !error && (
-                  <PageEmptyState
-                    compact
-                    icon={query ? <SearchX /> : <BookText />}
-                    title={t(query ? "noMatches" : "savedCommands")}
-                    description={!query && t("libraryEmpty")}
-                    action={
-                      query && (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setQuery("")}
-                        >
-                          {t("clearFilters", { ns: "tunnel" })}
-                        </Button>
-                      )
-                    }
-                  />
-                )}
               </div>
-            </>
-          )}
-          {error && (
-            <p role="alert" className="terminal-error">
-              {t(error)}
-            </p>
-          )}
-        </Modal>
+            ))}
+            {(library.loaded || !isTauri()) &&
+              !filtered.length &&
+              !visibleError && (
+                <PageEmptyState
+                  compact
+                  icon={query ? <SearchX /> : <BookText />}
+                  title={t(query ? "noMatches" : "savedCommands")}
+                  description={!query && t("libraryEmpty")}
+                  action={
+                    query && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setQuery("")}
+                      >
+                        {t("clearFilters", { ns: "tunnel" })}
+                      </Button>
+                    )
+                  }
+                />
+              )}
+          </div>
+        </>
       )}
-    </Context.Provider>
+      {visibleError && (
+        <p role="alert" className="terminal-error">
+          {t(visibleError)}
+        </p>
+      )}
+    </>
   );
+
+  if (close) {
+    return (
+      <Modal title={title} close={dismiss} disablePointerDismissal={!!editor}>
+        {body}
+      </Modal>
+    );
+  }
+
+  return (
+    <div className="grid min-w-0 gap-3">
+      <h3 className="settings-dialog-section-title">{title}</h3>
+      {body}
+    </div>
+  );
+}
+
+function LibraryActions({ children }: { children: ReactNode }) {
+  return <div className="flex flex-wrap justify-end gap-2">{children}</div>;
 }

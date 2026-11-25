@@ -328,6 +328,11 @@ impl server::Handler for Fixture {
         }
         if let Some(pair) = self.pairs.lock().unwrap().get(&ch).cloned() {
             session.channel_success(ch)?;
+            if command == b"fixture-exit-before-close" {
+                session.exit_status_request(ch, 0)?;
+                session.data(ch, b"late terminal output\n".to_vec())?;
+                return Ok(());
+            }
             self.shells
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             tokio::spawn(spawn_shell(

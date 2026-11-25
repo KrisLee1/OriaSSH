@@ -1,4 +1,4 @@
-use super::{frame, rfb, session_error, Endpoint, Input, Viewer, Viewers};
+use super::{frame, rfb, session_error, Endpoint, Input, SshContext, Viewer, Viewers};
 use crate::native_message;
 use flate2::{Compress, Compression, FlushCompress};
 use std::{io, time::Duration};
@@ -486,6 +486,7 @@ async fn cancelling_password_wait_releases_tcp_and_a_refused_target_reports_the_
     let viewers = Viewers::default();
     let mut viewer = Viewer {
         endpoint,
+        context: SshContext::External,
         session: None,
     };
     let id = viewer.begin(None, false);

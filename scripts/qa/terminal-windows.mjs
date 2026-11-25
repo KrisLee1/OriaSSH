@@ -18,7 +18,7 @@ fs.writeFileSync(sshConfig, "");
 const debug = await port();
 const app = spawn(
   path.resolve(
-    process.env.ORIA_QA_EXE || "src-tauri/target/debug/oria-tunnel.exe",
+    process.env.ORIA_QA_EXE || "src-tauri/target/debug/oria-ssh.exe",
   ),
   [],
   {
@@ -26,8 +26,8 @@ const app = spawn(
     stdio: "ignore",
     env: {
       ...process.env,
-      ORIATUNNEL_TEST_DATA_DIR: data,
-      ORIATUNNEL_TEST_SSH_CONFIG: sshConfig,
+      ORIASSH_TEST_DATA_DIR: data,
+      ORIASSH_TEST_SSH_CONFIG: sshConfig,
       WEBVIEW2_USER_DATA_FOLDER: path.join(profile, "webview"),
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:
         "--remote-debugging-address=127.0.0.1 --remote-debugging-port=" + debug,

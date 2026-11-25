@@ -9,6 +9,10 @@ mod shared_buffer;
 #[cfg(test)]
 mod tests;
 
+use crate::{
+    model::{Host, Rule, ServiceProtocol, Snapshot},
+    service::DirectProtocol,
+};
 use serde::Deserialize;
 use std::{
     collections::HashMap,
@@ -99,8 +103,55 @@ impl Drop for Session {
 }
 struct Viewer {
     endpoint: Endpoint,
+    context: SshContext,
     session: Option<Arc<Session>>,
 }
+
+pub(crate) enum SshContext {
+    Forward(String),
+    Direct(Option<String>),
+    External,
+}
+
+impl SshContext {
+    fn service_user(
+        &self,
+        endpoint: &Endpoint,
+        snapshot: &Snapshot,
+        observations: &crate::service_control::Observations,
+    ) -> Option<String> {
+        let forward = match self {
+            Self::Forward(id) => snapshot
+                .rules
+                .iter()
+                .find(|rule| &rule.id == id)
+                .and_then(|rule| endpoint.on_forward(snapshot, rule).map(|host| (rule, host))),
+            Self::Direct(user) => return user.clone().filter(|user| !user.trim().is_empty()),
+            Self::External => match endpoint.display_forwards(snapshot).as_slice() {
+                [] => {
+                    return endpoint
+                        .direct_user(snapshot)
+                        .filter(|user| !user.trim().is_empty());
+                }
+                [matched] => Some(*matched),
+                _ => None,
+            },
+        };
+        let (rule, active_host) = forward?;
+        let service = Endpoint::forwarded_service(snapshot, rule, active_host)?;
+        let host = snapshot.hosts.iter().find(|host| host.id == rule.host_id)?;
+        observations
+            .running_vnc_user(service, host, &snapshot.hosts)
+            .or_else(|| {
+                service
+                    .execution_login(host, None)
+                    .ok()
+                    .map(|login| login.user)
+            })
+            .filter(|user| !user.trim().is_empty())
+    }
+}
+
 #[derive(Default)]
 pub struct Viewers(Mutex<HashMap<String, Viewer>>);
 impl Viewers {
@@ -135,55 +186,108 @@ impl Viewers {
 pub fn open(app: &AppHandle, endpoint: Endpoint) -> Result<(), String> {
     let snapshot = crate::app::state(app).snapshot();
     let preferred = endpoint.workspace_host(&snapshot);
-    open_with_host(app, endpoint, preferred)
+    open_with_host(app, endpoint, preferred, SshContext::External)
 }
 impl Endpoint {
-    fn forwards<'a>(
-        &self,
-        snapshot: &'a crate::model::Snapshot,
-    ) -> Vec<(&'a crate::model::Rule, &'a crate::model::Host)> {
-        let mut matches = Vec::new();
-        for rule in &snapshot.rules {
-            if rule.service_protocol != Some(crate::model::ServiceProtocol::Vnc) {
-                continue;
-            }
-            let Some(runtime) = snapshot.runtimes.iter().find(|r| r.rule_id == rule.id) else {
-                continue;
-            };
-            let Some(host) = &runtime.host_snapshot else {
-                continue;
-            };
-            if crate::service::service_url(rule, host, runtime)
-                .ok()
-                .and_then(|url| Endpoint::parse(&url).ok())
-                .as_ref()
-                == Some(self)
-            {
-                matches.push((rule, host));
-            }
+    fn forwarded_service<'a>(
+        snapshot: &'a Snapshot,
+        rule: &Rule,
+        host: &Host,
+    ) -> Option<&'a crate::commands::Service> {
+        // A forward can reach another machine. Only associate a service on its own SSH host.
+        let target = rule.target_host.trim_matches(['[', ']']);
+        if rule.kind != crate::model::ForwardKind::L
+            || !(target.eq_ignore_ascii_case(host.address.trim_matches(['[', ']']))
+                || target.eq_ignore_ascii_case("localhost")
+                || target.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback()))
+        {
+            return None;
         }
-        matches
+        let candidates = snapshot.services.iter().filter(|service| {
+            service.host_ids.contains(&rule.host_id)
+                && service.port == Some(rule.target_port)
+                && service
+                    .direct_protocol
+                    .is_none_or(|protocol| protocol == DirectProtocol::Vnc)
+        });
+        let mut bound = candidates
+            .clone()
+            .filter(|service| service.rule_ids.contains(&rule.id));
+        if let Some(first) = bound.next() {
+            return bound.next().is_none().then_some(first);
+        }
+        let mut candidates = candidates;
+        let first = candidates.next()?;
+        candidates.next().is_none().then_some(first)
     }
-    fn workspace_host(&self, snapshot: &crate::model::Snapshot) -> Option<String> {
+
+    fn on_forward<'a>(&self, snapshot: &'a Snapshot, rule: &Rule) -> Option<&'a Host> {
+        let runtime = snapshot.runtimes.iter().find(|r| r.rule_id == rule.id)?;
+        let host = runtime.host_snapshot.as_ref()?;
+        let url = crate::service::forwarded_url(rule, host, runtime, DirectProtocol::Vnc).ok()?;
+        (&Endpoint::parse(&url).ok()? == self).then_some(host)
+    }
+
+    fn forwards<'a>(&self, snapshot: &'a Snapshot) -> Vec<(&'a Rule, &'a Host)> {
+        snapshot
+            .rules
+            .iter()
+            .filter(|rule| rule.service_protocol == Some(ServiceProtocol::Vnc))
+            .filter_map(|rule| self.on_forward(snapshot, rule).map(|host| (rule, host)))
+            .collect()
+    }
+
+    fn display_forwards<'a>(&self, snapshot: &'a Snapshot) -> Vec<(&'a Rule, &'a Host)> {
+        snapshot
+            .rules
+            .iter()
+            .filter_map(|rule| self.on_forward(snapshot, rule).map(|host| (rule, host)))
+            .collect()
+    }
+    fn address_hosts<'a>(&'a self, snapshot: &'a Snapshot) -> impl Iterator<Item = &'a Host> + 'a {
+        let ip = self.host.parse::<IpAddr>().ok();
+        snapshot.hosts.iter().filter(move |host| {
+            let address = host.address.trim_matches(['[', ']']);
+            !host.hidden
+                && snapshot.added_host_ids.contains(&host.id)
+                && (address.eq_ignore_ascii_case(&self.host)
+                    || ip.is_some_and(|ip| address.parse() == Ok(ip)))
+        })
+    }
+    fn direct_user(&self, snapshot: &Snapshot) -> Option<String> {
+        let mut hosts = self.address_hosts(snapshot);
+        let mut services = self.address_hosts(snapshot).flat_map(|host| {
+            snapshot.services.iter().filter_map(move |service| {
+                (service.port == Some(self.port)
+                    && service
+                        .direct_protocol
+                        .is_none_or(|protocol| protocol == DirectProtocol::Vnc)
+                    && service.host_ids.contains(&host.id))
+                .then_some((service, host))
+            })
+        });
+        let login = if let Some((service, host)) = services.next() {
+            if services.next().is_some() {
+                return None;
+            }
+            service.execution_login(host, None)
+        } else {
+            let host = hosts.next()?;
+            if hosts.next().is_some() {
+                return None;
+            }
+            host.default_login()
+        };
+        login.ok().map(|host| host.user)
+    }
+    fn workspace_host(&self, snapshot: &Snapshot) -> Option<String> {
         let mut matches: std::collections::BTreeSet<_> = self
-            .forwards(snapshot)
+            .display_forwards(snapshot)
             .iter()
             .map(|(r, _)| r.host_id.clone())
             .collect();
         if matches.is_empty() {
-            matches.extend(
-                snapshot
-                    .hosts
-                    .iter()
-                    .filter(|h| {
-                        snapshot.added_host_ids.contains(&h.id)
-                            && !h.hidden
-                            && h.address
-                                .trim_matches(['[', ']'])
-                                .eq_ignore_ascii_case(&self.host)
-                    })
-                    .map(|h| h.id.clone()),
-            );
+            matches.extend(self.address_hosts(snapshot).map(|host| host.id.clone()));
         }
         if matches.len() == 1 {
             matches.pop_first()
@@ -191,7 +295,7 @@ impl Endpoint {
             None
         }
     }
-    fn credential_binding(&self, snapshot: &crate::model::Snapshot) -> Vec<u8> {
+    fn credential_binding(&self, snapshot: &Snapshot) -> Vec<u8> {
         let mut routes: Vec<_> = self
             .forwards(snapshot)
             .into_iter()
@@ -210,13 +314,14 @@ impl Endpoint {
             .expect("VNC address and routes serialize")
     }
 }
-pub fn open_with_host(
+fn open_with_host(
     app: &AppHandle,
     endpoint: Endpoint,
     preferred: Option<String>,
+    context: SshContext,
 ) -> Result<(), String> {
     let label = format!("vnc-{}", uuid::Uuid::new_v4());
-    let title = format!("{} · VNC · OriaTunnel", endpoint.address());
+    let title = format!("{} · VNC · OriaSSH", endpoint.address());
     let mut config = app
         .config()
         .app
@@ -240,6 +345,7 @@ pub fn open_with_host(
         label.clone(),
         Viewer {
             endpoint,
+            context,
             session: None,
         },
     );
@@ -317,19 +423,32 @@ pub fn vnc_endpoint(
         .ok_or_else(|| "Unknown VNC window".into())
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VncAttempt {
+    id: String,
+    ssh_user: Option<String>,
+}
+
 #[tauri::command]
 pub fn vnc_begin(
     window: WebviewWindow,
     viewers: tauri::State<'_, Viewers>,
     skip_saved: Option<bool>,
-) -> Result<String, String> {
+) -> Result<VncAttempt, String> {
     let state = crate::app::state(window.app_handle());
     let snapshot = state.snapshot();
     let mut all = viewers.0.lock().unwrap();
     let view = all.get_mut(window.label()).ok_or("Unknown VNC window")?;
     let credential = crate::credentials::SUPPORTED
         .then(|| state.vnc_credential(&view.endpoint.credential_binding(&snapshot)));
-    Ok(view.begin(credential, skip_saved.unwrap_or(false)))
+    let ssh_user =
+        view.context
+            .service_user(&view.endpoint, &snapshot, state.service_observations());
+    Ok(VncAttempt {
+        id: view.begin(credential, skip_saved.unwrap_or(false)),
+        ssh_user,
+    })
 }
 
 impl Viewer {
@@ -530,9 +649,15 @@ pub fn vnc_end(window: WebviewWindow, viewers: tauri::State<'_, Viewers>, id: St
     }
 }
 
-pub fn launch(app: &AppHandle, url: &str, host_id: String, internal: bool) -> Result<(), String> {
-    if internal {
-        return open_with_host(app, Endpoint::parse(url)?, Some(host_id));
+pub(crate) fn launch(
+    app: &AppHandle,
+    url: &str,
+    host_id: String,
+    context: SshContext,
+    internal: bool,
+) -> Result<(), String> {
+    if internal || is_default_vnc(app.clone()) {
+        return open_with_host(app, Endpoint::parse(url)?, Some(host_id), context);
     }
     open_default(app, url)
 }
@@ -653,7 +778,7 @@ pub async fn choose_default_vnc(app: AppHandle) -> Result<(), String> {
         use tauri_plugin_shell::ShellExt;
         #[allow(deprecated)]
         app.shell()
-            .open("ms-settings:defaultapps?registeredAppUser=OriaTunnel", None)
+            .open("ms-settings:defaultapps?registeredAppUser=OriaSSH", None)
             .map_err(|e| e.to_string())
     }
     #[cfg(target_os = "macos")]

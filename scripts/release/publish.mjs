@@ -5,7 +5,7 @@ import { platforms, releaseVersion, root } from './config.mjs';
 import { sha256 } from './collect.mjs';
 import { buildVerifier, run, signingEnvironment } from '../check-update-secrets.mjs';
 const owner = 'KrisLee1';
-const repo = 'OriaTunnel';
+const repo = 'OriaSSH';
 const safeName = name => typeof name === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name);
 export function readReleaseNotes(version, directory = path.join(root, 'docs/releases')) {
   if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('Invalid release notes version.');
@@ -27,7 +27,7 @@ export function validateAssets(directory, { version, commit, verifier, verify = 
     const receipt = JSON.parse(fs.readFileSync(path.join(directory, `receipt-${platform}.json`), 'utf8'));
     if (receipt.platform !== platform || receipt.target !== spec.target || receipt.version !== version || receipt.commit !== commit) throw new Error(`Mismatched receipt: ${platform}.`);
     if (receipt.licenseSha256 !== sha256(path.join(root, 'LICENSE'))) throw new Error(`Mismatched packaged license: ${platform}.`);
-    const updaterName = spec.os === 'macos' ? `OriaTunnel_${version}_${spec.arch}.app.tar.gz` : `OriaTunnel_${version}_${spec.arch}-setup.exe`;
+    const updaterName = spec.os === 'macos' ? `OriaSSH_${version}_${spec.arch}.app.tar.gz` : `OriaSSH_${version}_${spec.arch}-setup.exe`;
     if (receipt.updater !== updaterName) throw new Error('Invalid updater artifact name or architecture.');
     if (!Array.isArray(receipt.assets) || receipt.assets.length !== (spec.os === 'macos' ? 4 : 2)) throw new Error('Missing platform release assets.');
     for (const asset of receipt.assets) {
@@ -68,7 +68,7 @@ export function selectRelease(releases, tag) {
   // Only our uniquely named, source-bound draft is eligible for final tagging.
   const pending = releases.filter(release => release.draft && !release.prerelease
     && /^untagged-[a-z0-9]+$/.test(release.tag_name || '')
-    && release.name === `OriaTunnel ${tag.slice(1)}`
+    && release.name === `OriaSSH ${tag.slice(1)}`
     && /<!-- oria-release-commit:[0-9a-f]{40} -->/.test(release.body || ''));
   if (pending.length > 1) throw new Error('Multiple source-bound drafts match the requested version.');
   return pending[0];
@@ -108,7 +108,7 @@ export async function createDraft({ github, context, core }) {
   const notes = readReleaseNotes(version) ?? (await github.rest.repos.generateReleaseNotes({ owner, repo, tag_name: `v${version}`, target_commitish: commit })).data.body;
   manifest.notes = notes;
   const body = `${notes}\n\n<!-- oria-release-commit:${commit} -->\n\nWindows: download the matching NSIS installer. macOS: download the matching DMG or DMG ZIP.\nThe app downloads its architecture-specific signed updater automatically.\n`;
-  if (!release) release = (await github.rest.repos.createRelease({ owner, repo, tag_name: `v${version}`, target_commitish: commit, name: `OriaTunnel ${version}`, body, draft: true, prerelease: false, make_latest: 'false' })).data;
+  if (!release) release = (await github.rest.repos.createRelease({ owner, repo, tag_name: `v${version}`, target_commitish: commit, name: `OriaSSH ${version}`, body, draft: true, prerelease: false, make_latest: 'false' })).data;
   else release = (await github.rest.repos.updateRelease({ owner, repo, release_id: release.id, body, target_commitish: commit })).data;
   const oldAssets = await github.paginate(github.rest.repos.listReleaseAssets, { owner, repo, release_id: release.id, per_page: 100 });
   // Draft-only retries replace their assets; published releases never reach here.

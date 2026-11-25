@@ -1,5 +1,24 @@
 import type { Host, Snapshot } from "@/types";
+import { emptyHost } from "@/features/tunnels/rule-model";
 import { runtimeStatus } from "@/features/tunnels/runtime-status";
+
+export function copyHostDraft(host: Host, name: string): Host {
+  return {
+    ...emptyHost(),
+    name,
+    address: host.address,
+    port: host.port,
+    connection: host.connection,
+    proxyJump: host.proxyJump,
+    identityAgent: host.identityAgent,
+    identitiesOnly: host.identitiesOnly,
+    algorithms: host.algorithms,
+    unsupportedSessionOptions: host.unsupportedSessionOptions,
+    tags: host.tags,
+    appearance: host.appearance,
+    credentialOnly: true,
+  };
+}
 
 export function addedHosts(
   data: Pick<Snapshot, "hosts" | "rules" | "addedHostIds">,

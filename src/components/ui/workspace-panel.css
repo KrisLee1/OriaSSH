@@ -1,10 +1,19 @@
-.workspace-panel {
+.workspace-panel.floating-surface {
+  --aide-floating-surface-background: color-mix(
+    in srgb,
+    var(--oria-color-bg)
+      calc(
+        var(--oria-opacity-overlay) * var(--aide-component-overlay-opacity) *
+          100%
+      ),
+    transparent
+  );
   position: fixed;
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  border: 1px solid var(--oria-color-border);
+  border: var(--oria-border-width-default) solid var(--oria-color-border);
   border-radius: var(--oria-radius-xl);
   overflow: hidden;
   color: var(--oria-color-fg);

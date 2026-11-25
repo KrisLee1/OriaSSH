@@ -1,6 +1,6 @@
 import { PageEmptyState } from "@/components/page-empty-state";
 import { SearchInput } from "@/components/ui/search-input";
-import { useId, useState, type CSSProperties } from "react";
+import { useId, useMemo, useState } from "react";
 import {
   DatabaseBackupIcon,
   ServerCogIcon,
@@ -24,14 +24,25 @@ import {
   MonitorCogIcon,
   ChevronDownIcon,
   ServerIcon,
+  PencilIcon,
   DatabaseIcon,
   GlobeIcon,
-  TerminalIcon,
+  SquareTerminalIcon,
   CodeIcon,
   BracesIcon,
   MonitorIcon,
   LaptopIcon,
   SmartphoneIcon,
+  TabletIcon,
+  PcCaseIcon,
+  PrinterIcon,
+  UsbIcon,
+  CctvIcon,
+  ProjectorIcon,
+  SatelliteDishIcon,
+  WatchIcon,
+  TvIcon,
+  KeyboardIcon,
   NetworkIcon,
   RouterIcon,
   WifiIcon,
@@ -82,13 +93,19 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import type { RuleIcon } from "@/types";
-import { ConnectionColorDot } from "./connection-color";
+import { ConnectionColorDot, ConnectionColorPicker } from "./connection-color";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import serviceIcons from "@/assets/service-icons.json";
+import platformIcons from "@/assets/platform-icons.json";
 import catalog from "./connection-icon-catalog.json";
 
 const icons = {
@@ -116,12 +133,22 @@ const icons = {
   server: ServerIcon,
   database: DatabaseIcon,
   globe: GlobeIcon,
-  terminal: TerminalIcon,
+  terminal: SquareTerminalIcon,
   code: CodeIcon,
   braces: BracesIcon,
   monitor: MonitorIcon,
   laptop: LaptopIcon,
   smartphone: SmartphoneIcon,
+  tablet: TabletIcon,
+  "pc-case": PcCaseIcon,
+  printer: PrinterIcon,
+  usb: UsbIcon,
+  cctv: CctvIcon,
+  projector: ProjectorIcon,
+  dish: SatelliteDishIcon,
+  watch: WatchIcon,
+  television: TvIcon,
+  keyboard: KeyboardIcon,
   network: NetworkIcon,
   router: RouterIcon,
   wifi: WifiIcon,
@@ -170,6 +197,7 @@ const icons = {
   layers: LayersIcon,
   workflow: WorkflowIcon,
 };
+const brands = { ...serviceIcons.icons, ...platformIcons };
 export { catalog as connectionIconCatalog };
 
 export function connectionIconLabelKey(item: { id?: string; value?: string }) {
@@ -210,8 +238,8 @@ export function ConnectionIcon({
       ? icons[icon.value as keyof typeof icons]
       : undefined;
   const brand =
-    icon.kind === "builtin" && Object.hasOwn(serviceIcons.icons, icon.value)
-      ? serviceIcons.icons[icon.value as keyof typeof serviceIcons.icons]
+    icon.kind === "builtin" && Object.hasOwn(brands, icon.value)
+      ? brands[icon.value as keyof typeof brands]
       : undefined;
   if (icon.kind === "builtin" && !Glyph && !brand)
     return <ConnectionColorDot color={color} />;
@@ -243,18 +271,99 @@ export function ConnectionIcon({
   );
 }
 
+const iconOptions = {
+  builtin: catalog.icons.filter(({ category }) => category !== "service"),
+  service: catalog.icons.filter(({ category }) => category === "service"),
+  emoji: catalog.emojis,
+};
+const defaultHostIcon = { kind: "builtin", value: "server" } satisfies RuleIcon;
+const iconOptionClass = buttonVariants({
+  variant: "ghost",
+  size: "icon",
+  className: "connection-icon-option",
+});
+
+function IconOptions({
+  category,
+  query,
+  value,
+  color,
+  onChange,
+}: {
+  category: keyof typeof iconOptions;
+  query: string;
+  value: RuleIcon | null;
+  color: string | null;
+  onChange: (icon: RuleIcon) => void;
+}) {
+  const { t } = useTranslation("tunnel");
+  const kind = category === "emoji" ? "emoji" : "builtin";
+  const entries = useMemo(
+    () =>
+      iconOptions[category].map((item) => {
+        const name = t(connectionIconLabelKey(item), { ns: "icons" });
+        const value = "id" in item ? item.id : item.value;
+        return {
+          name,
+          value,
+          search: `${name} ${item.zh} ${item.en} ${value}`.toLocaleLowerCase(),
+        };
+      }),
+    [category, t],
+  );
+  const term = query.trim().toLocaleLowerCase();
+  const visible = term
+    ? entries.filter(({ search }) => search.includes(term))
+    : entries;
+  return (
+    <div className="connection-icon-options" data-category={category}>
+      <div className="connection-icon-grid">
+        {visible.map((item) => (
+          <button
+            key={item.value}
+            type="button"
+            className={iconOptionClass}
+            aria-label={item.name}
+            title={item.name}
+            aria-pressed={value?.kind === kind && value.value === item.value}
+            onClick={() => onChange({ kind, value: item.value })}
+          >
+            <ConnectionIcon icon={{ kind, value: item.value }} color={color} />
+          </button>
+        ))}
+        {!visible.length && (
+          <PageEmptyState
+            compact
+            role="status"
+            className="connection-icon-empty"
+            icon={<SearchIcon />}
+            title={t("noMatchingIcons")}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function ConnectionIconPicker({
   value,
   color,
   onChange,
   fieldLabel,
   initialCategory = "builtin",
+  avatar,
 }: {
   value: RuleIcon | null;
   color: string | null;
   onChange: (icon: RuleIcon | null) => void;
   fieldLabel?: string;
   initialCategory?: "builtin" | "service";
+  avatar?: {
+    onColorChange: (color: string | null) => void;
+    fallbackIcon?: RuleIcon;
+    colorLabel?: string;
+    resetLabel?: string;
+  };
 }) {
   const { t } = useTranslation("tunnel");
   const [query, setQuery] = useState("");
@@ -264,17 +373,6 @@ export function ConnectionIconPicker({
     value?.kind === "emoji" ? value.value : "",
   );
   const id = useId();
-  const label = (item: { id?: string; value?: string }) =>
-    t(connectionIconLabelKey(item), { ns: "icons" });
-  const matches = (item: {
-    zh: string;
-    en: string;
-    id?: string;
-    value?: string;
-  }) =>
-    `${label(item)} ${item.zh} ${item.en} ${item.id || item.value}`
-      .toLocaleLowerCase()
-      .includes(query.trim().toLocaleLowerCase());
   const selected =
     value?.kind === "builtin"
       ? catalog.icons.find((item) => item.id === value.value)
@@ -282,49 +380,160 @@ export function ConnectionIconPicker({
   const selectedName = !value
     ? t("defaultIcon")
     : selected
-      ? label(selected)
+      ? t(connectionIconLabelKey(selected), { ns: "icons" })
       : value.value;
-  const options = (kind: RuleIcon["kind"], category?: "service") => {
-    const entries = (
-      kind === "builtin"
-        ? catalog.icons
-            .filter((item) =>
-              category
-                ? item.category === category
-                : item.category !== "service",
-            )
-            .map((item) => ({ ...item, value: item.id }))
-        : catalog.emojis
-    ).filter(matches);
-    return (
-      <ScrollArea
-        className="connection-icon-options"
-        contentClassName="connection-icon-grid"
-      >
-        {entries.map((item) => (
-          <Button
-            key={item.value}
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="connection-icon-option"
-            aria-label={label(item)}
-            title={label(item)}
-            aria-pressed={value?.kind === kind && value.value === item.value}
-            onClick={() => onChange({ kind, value: item.value })}
-          >
-            <ConnectionIcon icon={{ kind, value: item.value }} color={color} />
-          </Button>
-        ))}
-        {!entries.length && (
-          <PageEmptyState compact role="status" className="connection-icon-empty" icon={<SearchIcon />} title={t("noMatchingIcons")} />
-        )}
-      </ScrollArea>
-    );
-  };
+  const customIsValid = validCustomIcon(custom);
   const applyCustom = () => {
-    if (validCustomIcon(custom)) onChange({ kind: "emoji", value: custom });
+    if (customIsValid) onChange({ kind: "emoji", value: custom });
   };
+  const fallbackIcon = avatar?.fallbackIcon ?? defaultHostIcon;
+  const resetLabel = avatar ? avatar.resetLabel : t("defaultIcon");
+  const optionsProps = {
+    query,
+    value: value ?? (avatar ? fallbackIcon : null),
+    color,
+    onChange: (icon: RuleIcon) =>
+      onChange(
+        avatar &&
+          icon.kind === fallbackIcon.kind &&
+          icon.value === fallbackIcon.value
+          ? null
+          : icon,
+      ),
+  };
+  const library = (
+    <div className="connection-icon-body">
+      <div className="connection-icon-tools">
+        <Tabs
+          defaultValue={
+            value?.kind === "emoji"
+              ? "emoji"
+              : value?.kind === "builtin" &&
+                  catalog.icons.find((i) => i.id === value.value)?.category ===
+                    "service"
+                ? "service"
+                : value
+                  ? "builtin"
+                  : initialCategory
+          }
+        >
+          <div className="connection-icon-tools-row">
+            <TabsList
+              aria-label={t("iconLibrary")}
+              className="connection-icon-tabs"
+            >
+              <TabsTrigger value="builtin">{t("builtinIcons")}</TabsTrigger>
+              <TabsTrigger value="service">
+                {t("serviceIcons", { ns: "commands" })}
+              </TabsTrigger>
+              <TabsTrigger value="emoji">{t("emojiCategory")}</TabsTrigger>
+            </TabsList>
+            {resetLabel && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-pressed={!value}
+                onClick={() => onChange(null)}
+              >
+                {resetLabel}
+              </Button>
+            )}
+          </div>
+          <SearchInput
+            aria-label={t("searchIcons")}
+            placeholder={t("searchIcons")}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <TabsContent
+            value="builtin"
+            keepMounted={Boolean(avatar)}
+            className="connection-icon-panel"
+          >
+            <IconOptions category="builtin" {...optionsProps} />
+          </TabsContent>
+          <TabsContent value="service" className="connection-icon-panel">
+            <IconOptions category="service" {...optionsProps} />
+          </TabsContent>
+          <TabsContent
+            value="emoji"
+            keepMounted={Boolean(avatar)}
+            className="connection-icon-panel"
+          >
+            <IconOptions category="emoji" {...optionsProps} />
+            <label className="sr-only" htmlFor={`${id}-custom`}>
+              {t("customEmoji")}
+            </label>
+            <div className="connection-icon-custom-row">
+              <Input
+                id={`${id}-custom`}
+                value={custom}
+                maxLength={64}
+                placeholder={t("customEmoji")}
+                aria-describedby={`${id}-hint`}
+                aria-invalid={!!custom && !customIsValid}
+                onChange={(event) => setCustom(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+                    event.preventDefault();
+                    applyCustom();
+                  }
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!customIsValid}
+                onClick={applyCustom}
+              >
+                {t("useIcon")}
+              </Button>
+            </div>
+            <small
+              id={`${id}-hint`}
+              className={custom && !customIsValid ? "inline-error" : "muted"}
+            >
+              {t("customEmojiHint")}
+            </small>
+          </TabsContent>
+        </Tabs>
+      </div>
+    </div>
+  );
+  if (avatar) {
+    const label = fieldLabel ?? t("hostIcon");
+    return (
+      <Popover>
+        <PopoverTrigger
+          render={
+            <Button
+              type="button"
+              variant="ghost"
+              className="profile-icon-trigger"
+            />
+          }
+          aria-label={label}
+          title={label}
+        >
+          <ConnectionIcon icon={value ?? fallbackIcon} color={color} />
+          <span className="profile-icon-edit" aria-hidden="true">
+            <PencilIcon />
+          </span>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="profile-icon-popover">
+          <PopoverTitle>{label}</PopoverTitle>
+          <ConnectionColorPicker
+            fieldLabel={avatar.colorLabel ?? t("hostColor")}
+            value={color}
+            onChange={avatar.onColorChange}
+          />
+          {library}
+        </PopoverContent>
+      </Popover>
+    );
+  }
   return (
     <div className="field">
       <span id={id}>{fieldLabel ?? t("connectionIcon")}</span>
@@ -356,103 +565,7 @@ export function ConnectionIconPicker({
                 ease: [0.22, 1, 0.36, 1],
               }}
             >
-              <div className="connection-icon-body">
-                <div className="connection-icon-tools">
-                  <Tabs
-                    defaultValue={
-                      value?.kind === "emoji"
-                        ? "emoji"
-                        : value?.kind === "builtin" &&
-                            catalog.icons.find((i) => i.id === value.value)
-                              ?.category === "service"
-                          ? "service"
-                          : value
-                            ? "builtin"
-                            : initialCategory
-                    }
-                  >
-                    <div className="connection-icon-tools-row">
-                      <TabsList aria-label={t("iconLibrary")} variant="soft">
-                        <TabsTrigger value="builtin">
-                          {t("builtinIcons")}
-                        </TabsTrigger>
-                        <TabsTrigger value="service">
-                          {t("serviceIcons", { ns: "commands" })}
-                        </TabsTrigger>
-                        <TabsTrigger value="emoji">
-                          {t("emojiCategory")}
-                        </TabsTrigger>
-                      </TabsList>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        aria-pressed={!value}
-                        onClick={() => onChange(null)}
-                      >
-                        {t("defaultIcon")}
-                      </Button>
-                    </div>
-                    <SearchInput
-                      aria-label={t("searchIcons")}
-                      placeholder={t("searchIcons")}
-                      value={query}
-                      onChange={(event) => setQuery(event.target.value)}
-                    />
-                    <TabsContent value="builtin">
-                      {options("builtin")}
-                    </TabsContent>
-                    <TabsContent value="service">
-                      {options("builtin", "service")}
-                    </TabsContent>
-                    <TabsContent value="emoji">
-                      {options("emoji")}
-                      <label
-                        className="connection-icon-custom-label"
-                        htmlFor={`${id}-custom`}
-                      >
-                        {t("customEmoji")}
-                      </label>
-                      <div className="connection-icon-custom-row">
-                        <Input
-                          id={`${id}-custom`}
-                          value={custom}
-                          maxLength={64}
-                          placeholder="🚀"
-                          aria-describedby={`${id}-hint`}
-                          aria-invalid={!!custom && !validCustomIcon(custom)}
-                          onChange={(event) => setCustom(event.target.value)}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter") {
-                              event.preventDefault();
-                              applyCustom();
-                            }
-                          }}
-                        />
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          disabled={!validCustomIcon(custom)}
-                          onClick={applyCustom}
-                        >
-                          {t("useIcon")}
-                        </Button>
-                      </div>
-                      <small
-                        id={`${id}-hint`}
-                        className={
-                          custom && !validCustomIcon(custom)
-                            ? "inline-error"
-                            : "muted"
-                        }
-                      >
-                        {t("customEmojiHint")}
-                      </small>
-                    </TabsContent>
-                  </Tabs>
-                </div>
-              </div>
+              {library}
             </motion.div>
           )}
         </AnimatePresence>

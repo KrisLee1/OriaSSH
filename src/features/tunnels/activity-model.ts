@@ -1,42 +1,53 @@
 import type { ActivityRecord, Host, Rule, Snapshot } from "@/types";
 import { runtimeStatus } from "./runtime-status";
 
-export type ActivityGrouping = "none" | "host" | "forward" | "status";
+export type ActivityGrouping = "none" | "forward" | "status";
 export type ActivityRow = {
   record: ActivityRecord;
   hostId?: string;
   host?: Host;
   rule?: Rule;
+  services: { id: string; name: string }[];
   hostTest: boolean;
   status: { label: string; tone: string };
 };
 export function activityRows(
-  data: Pick<Snapshot, "hosts" | "rules" | "activity">,
+  data: Pick<Snapshot, "hosts" | "rules" | "services" | "activity">,
 ): ActivityRow[] {
   const hosts = new Map(data.hosts.map((host) => [host.id, host]));
   const rules = new Map(data.rules.map((rule) => [rule.id, rule]));
+  const services = new Map(data.services?.map(({ id, name }) => [id, name]));
   return data.activity
     .map((record) => {
       const hostTest = record.ruleId.startsWith("host-test:");
       const rule = hostTest ? undefined : rules.get(record.ruleId);
-      const hostId = hostTest
-        ? record.ruleId.slice("host-test:".length)
-        : rule?.hostId;
-      const status = record.event.startsWith("target-")
+      const hostId =
+        record.hostId ??
+        (hostTest ? record.ruleId.slice("host-test:".length) : rule?.hostId);
+      const status = record.event.startsWith("command-")
         ? {
             label: record.event,
-            tone: record.event === "target-reachable" ? "success" : "danger",
+            tone: record.level === "warning" ? "danger" : "success",
           }
-        : runtimeStatus({
-            status: record.event,
-            errorKind: record.errorKind,
-            configurationChanged: false,
-          });
+        : record.event.startsWith("target-")
+          ? {
+              label: record.event,
+              tone: record.event === "target-reachable" ? "success" : "danger",
+            }
+          : runtimeStatus({
+              status: record.event,
+              errorKind: record.errorKind,
+              configurationChanged: false,
+            });
       return {
         record,
         hostId,
         host: hostId ? hosts.get(hostId) : undefined,
-        rule,
+        rule: rule?.hostId === hostId ? rule : undefined,
+        services: Array.from(new Set(record.serviceIds), (id) => ({
+          id,
+          name: services.get(id) || id,
+        })),
         hostTest,
         status,
       };
@@ -68,22 +79,34 @@ export function filterActivity(
           : !row.hostTest && `rule:${row.record.ruleId}` === filter.forward)) &&
       (filter.status === "all" || row.status.label === filter.status) &&
       (!filter.warnings || row.record.level === "warning") &&
-      `${row.host?.name || ""} ${row.host?.address || ""} ${row.hostId || ""} ${row.rule?.name || ""} ${row.record.ruleId} ${row.record.runId} ${translate(row.record.event)} ${translate(row.status.label)} ${row.record.errorKind ? translate(`failure-${row.record.errorKind}`) : ""}`
-        .toLocaleLowerCase()
-        .includes(query),
+      (!query ||
+        [
+          row.record.username,
+          row.host?.name,
+          row.host?.address,
+          row.hostId,
+          row.rule?.name,
+          row.record.ruleId,
+          row.record.runId,
+          ...row.services.flatMap(({ id, name }) => [id, name]),
+          translate(row.record.event),
+          translate(row.status.label),
+          row.record.errorKind && translate(`failure-${row.record.errorKind}`),
+        ]
+          .join(" ")
+          .toLocaleLowerCase()
+          .includes(query)),
   );
 }
 export function groupActivity(rows: ActivityRow[], grouping: ActivityGrouping) {
   const groups = new Map<string, ActivityRow[]>();
   for (const row of rows) {
     const key =
-      grouping === "host"
-        ? row.hostId || ""
-        : grouping === "forward"
-          ? row.record.ruleId
-          : grouping === "status"
-            ? row.status.label
-            : "";
+      grouping === "forward"
+        ? row.record.ruleId
+        : grouping === "status"
+          ? row.status.label
+          : "";
     const group = groups.get(key);
     if (group) group.push(row);
     else groups.set(key, [row]);

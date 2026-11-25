@@ -62,7 +62,8 @@ pub fn run() {
             let directory = app.path().app_data_dir()?;
             // Debug validation can use an isolated profile without touching the user's data.
             #[cfg(debug_assertions)]
-            let directory = std::env::var_os("ORIATUNNEL_TEST_DATA_DIR")
+            let directory = std::env::var_os("ORIASSH_TEST_DATA_DIR")
+                .or_else(|| std::env::var_os("ORIATUNNEL_TEST_DATA_DIR"))
                 .map(std::path::PathBuf::from)
                 .unwrap_or(directory);
             app.manage(native_message::NativeLanguageState::load(&directory));
@@ -124,10 +125,16 @@ pub fn run() {
             }
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
                 loop {
-                    interval.tick().await;
-                    app::state(&handle).poll_hosts(&handle);
+                    // Startup already scanned the sources. A slow scan must not queue missed ticks.
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    let app = handle.clone();
+                    if tokio::task::spawn_blocking(move || app::state(&app).poll_hosts(&app))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
                 }
             });
             Ok(())
@@ -224,9 +231,9 @@ pub fn run() {
                 app::terminal_api::detach_terminal,
                 app::terminal_api::forget_terminal,
                 app::command_api::save_service_profile,
-                app::command_api::set_host_services,
                 app::command_api::set_service_execution,
                 app::command_api::preview_service_template,
+                app::command_api::preview_service_commands,
                 app::command_api::delete_service_profile,
                 app::command_api::delete_service_profiles,
                 app::command_api::command_runs,
@@ -249,6 +256,9 @@ pub fn run() {
                 app::set_host_sources,
                 app::save_host,
                 app::save_host_metadata,
+                app::save_login_credential,
+                app::delete_login_credential,
+                app::login_credential_password_status,
                 app::add_discovered_hosts,
                 app::save_rule,
                 app::open_service,
@@ -260,7 +270,7 @@ pub fn run() {
                 app::test_host,
                 app::stop_rule,
                 app::trust_host,
-                app::host_has_active_work,
+                app::preview_host_deletion,
                 app::delete_host,
                 app::hide_host,
                 app::delete_rule,
@@ -268,6 +278,8 @@ pub fn run() {
                 app::set_close_to_tray,
                 app::quit_app,
                 app::export_config,
+                app::preview_config_export,
+                app::export_workspace_config,
                 native_message::set_native_language,
                 app::pick_identity_file,
                 app::pick_ssh_config_file,
@@ -340,7 +352,7 @@ pub fn run() {
             }
         })
         .build(context)
-        .expect("Unable to build OriaTunnel")
+        .expect("Unable to build OriaSSH")
         .run(|handle, event| {
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Opened { ref urls } = event {

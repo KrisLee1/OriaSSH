@@ -21,7 +21,7 @@ export function RuleActions({
   rule: Rule;
   onDetails: (rule: Rule) => void;
   onEdit: (rule: Rule) => void;
-  onCopy: (rule: Rule) => void;
+  onCopy?: (rule: Rule) => void;
   onDelete: (rule: Rule) => void;
   serviceActions?: ReactNode;
   children: ReactNode;
@@ -55,17 +55,19 @@ export function RuleActions({
       >
         <Settings2Icon />
       </Button>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-sm"
-        aria-label={`${t("copyRule")} ${rule.name}`}
-        title={t("copyRule")}
-        aria-haspopup="dialog"
-        onClick={() => onCopy(rule)}
-      >
-        <CopyPlusIcon />
-      </Button>
+      {onCopy && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={`${t("copyRule")} ${rule.name}`}
+          title={t("copyRule")}
+          aria-haspopup="dialog"
+          onClick={() => onCopy(rule)}
+        >
+          <CopyPlusIcon />
+        </Button>
+      )}
       {serviceActions}
       <Button
         type="button"

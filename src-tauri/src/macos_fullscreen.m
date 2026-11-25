@@ -5,14 +5,14 @@
 static char observerKey;
 static char styleMaskSetterKey;
 
-@interface OriaTunnelFullscreenChrome : NSObject
+@interface OriaSSHFullscreenChrome : NSObject
 @property(nonatomic, weak) NSWindow *bar;
 @property(nonatomic, weak) NSView *content;
 @property(nonatomic, strong) NSColor *background;
 @property(nonatomic) BOOL opaque, shadow, hidden, ignoresMouse;
 @end
 
-@implementation OriaTunnelFullscreenChrome
+@implementation OriaSSHFullscreenChrome
 - (void)didEnter:(NSNotification *)note {
     NSWindow *window = note.object;
     // AppKit finishes detaching the titlebar after the notification returns.
@@ -58,7 +58,7 @@ static void hideStandardTitlebar(NSWindow *window) {
     [window standardWindowButton:NSWindowZoomButton].hidden = YES;
 }
 
-void oria_tunnel_install_fullscreen_chrome(void *raw) {
+void oria_ssh_install_fullscreen_chrome(void *raw) {
     NSWindow *window = (__bridge NSWindow *)raw;
     if (objc_getAssociatedObject(window, &observerKey)) return;
 
@@ -82,7 +82,7 @@ void oria_tunnel_install_fullscreen_chrome(void *raw) {
         objc_setAssociatedObject(cls, &styleMaskSetterKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
 
-    OriaTunnelFullscreenChrome *observer = [OriaTunnelFullscreenChrome new];
+    OriaSSHFullscreenChrome *observer = [OriaSSHFullscreenChrome new];
     objc_setAssociatedObject(window, &observerKey, observer, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
     [center addObserver:observer selector:@selector(didEnter:) name:NSWindowDidEnterFullScreenNotification object:window];

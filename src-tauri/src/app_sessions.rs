@@ -2,6 +2,15 @@
 use super::*;
 pub(super) type Active = Arc<dyn Fn() -> bool + Send + Sync>;
 pub(super) type TrustChanged = Arc<dyn Fn(String, String) + Send + Sync>;
+
+pub(super) fn default_login(host: &Host, expected: Option<&str>) -> Result<Host, String> {
+    let login = host.default_login()?;
+    if expected.is_some_and(|id| id != login.login_id()) {
+        return Err(crate::native_message::plain("loginIdentityMissing"));
+    }
+    Ok(login)
+}
+
 pub(super) fn credentials(
     state: Arc<AppState>,
     app: tauri::AppHandle,
@@ -14,19 +23,14 @@ pub(super) fn credentials(
     let mut hops = Vec::new();
     for h in route {
         let supplied = secrets.get(&h.id).cloned().unwrap_or_default();
-        if !supplied.is_empty()
-            && remember.contains(&h.id)
-            && matches!(h.auth_method, AuthMethod::Auto | AuthMethod::Password)
-        {
-            saves.insert(h.id.clone(), state.vault.epoch(&h.id));
+        let (secret, update) =
+            state
+                .vault
+                .primary(h)
+                .prepare(supplied.into(), true, remember.contains(&h.id))?;
+        if let Some(epoch) = update {
+            saves.insert(h.id.clone(), epoch);
         }
-        let secret = if supplied.is_empty()
-            && matches!(h.auth_method, AuthMethod::Auto | AuthMethod::Password)
-        {
-            state.vault.read(h)?.unwrap_or_default()
-        } else {
-            supplied.into()
-        };
         let expected = state
             .config
             .lock()
@@ -45,15 +49,15 @@ pub(super) fn credentials(
             return;
         };
         if !active()
-            || !state.snapshot().hosts.iter().any(|h| {
-                h.id == host.id
-                    && h.diagnostics.is_empty()
-                    && crate::credentials::binding(h) == crate::credentials::binding(host)
-            })
+            || !state
+                .snapshot()
+                .hosts
+                .iter()
+                .any(|h| h.id == host.id && h.diagnostics.is_empty() && h.matches_login(host))
         {
             return;
         }
-        if let Err(error) = state.vault.save(host, password, method, *epoch) {
+        if let Err(error) = state.vault.primary(host).save(password, method, *epoch) {
             let _ = app.emit("tunnel://password-error", error);
         }
     });
@@ -80,4 +84,34 @@ pub(super) fn prompt(
         );
         changed(endpoint, fingerprint);
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workspace_login_checks_the_selected_default_and_matches_the_live_host_profile() {
+        let mut host = Host {
+            id: "fixture".into(),
+            user: "original".into(),
+            logins: vec![crate::model::LoginIdentity {
+                id: "alternate".into(),
+                label: String::new(),
+                user: "selected user".into(),
+                auth_method: AuthMethod::Password,
+                identity_files: vec![],
+            }],
+            ..Default::default()
+        };
+        let primary = default_login(&host, Some("primary:fixture")).unwrap();
+        host.default_login_id = Some("alternate".into());
+        assert!(default_login(&host, Some("primary:fixture")).is_err());
+        let alternate = default_login(&host, Some("alternate")).unwrap();
+        assert_eq!(alternate.user, "selected user");
+        assert!(host.matches_login(&alternate));
+        assert!(host.matches_login(&primary));
+        host.logins[0].user = "edited user".into();
+        assert!(!host.matches_login(&alternate));
+    }
 }

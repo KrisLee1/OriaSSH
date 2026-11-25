@@ -134,6 +134,76 @@ describe("actual file activity on the connection graph", () => {
     });
     expect(projectFileEdges(activities, [nodes[0], nodes[1]])).toEqual([]);
   });
+  it("keeps the same folder activity and animation through each child commit", () => {
+    const folder = {
+      ...task,
+      sources: ["/photos"],
+      sourceKinds: ["directory"],
+      count: 32,
+    };
+    const before = projectFileActivities([folder]);
+    const edges = projectFileEdges(before, nodes);
+    for (let i = 0; i < 32; i++) {
+      for (const phase of ["committing", "transferring"]) {
+        const snapshot = {
+          ...folder,
+          phase,
+          destination: "/dest/" + i,
+          currentSource: "/photos/" + i,
+        };
+        const activity = projectFileActivities([snapshot], before);
+        expect(activity).toBe(before);
+        expect(projectFileEdges(activity, nodes, edges)).toBe(edges);
+      }
+    }
+    expect(
+      projectFileEdges(
+        projectFileActivities([{ ...folder, phase: "conflict" }]),
+        nodes,
+      )[0].data?.moving,
+    ).toBe(false);
+    expect(
+      projectFileEdges(
+        projectFileActivities([{ ...task, phase: "committing" }]),
+        nodes,
+      )[0].data?.phase,
+    ).toBe("committing");
+  });
+
+  it("uses each remote host's appearance for direct and relayed legs, including color edits", () => {
+    const colored = nodes.map((node) => ({
+      ...node,
+      data: {
+        host: {
+          appearance: {
+            icon: null,
+            color: node.id === "host:a" ? "#a065ff" : "#59c7ab",
+          },
+        },
+      },
+    }));
+    const active = projectFileActivities([task]);
+    const direct = projectFileEdges(active, colored);
+    expect(direct[0]).toMatchObject({
+      style: { stroke: "#a065ff" },
+      data: { targetColor: "#59c7ab" },
+    });
+    const relay = projectFileEdges(
+      projectFileActivities([{ ...task, transport: "relay" }]),
+      colored,
+    );
+    expect(
+      relay.map((edge) => [edge.style?.stroke, edge.data?.targetColor]),
+    ).toEqual([
+      ["#a065ff", "#a065ff"],
+      ["#59c7ab", "#59c7ab"],
+    ]);
+    colored[2].data.host.appearance.color = "#775588";
+    expect(projectFileEdges(active, colored, direct)[0].data?.targetColor).toBe(
+      "#775588",
+    );
+  });
+
   it("renders file glyph motion only for an actual transferring edge", () => {
     const props = {
       id: "files:test",

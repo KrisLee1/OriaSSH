@@ -2,6 +2,36 @@
 
 从仓库根目录操作。应用版本当前由 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 和 `src-tauri/tauri.conf.json` 共同确定；发布标签必须为对应的 `vX.Y.Z` 正式版本。CI 使用 Node 24.19.0、pnpm 11.24.0、Rust 1.98.0，依赖按锁文件安装，Actions 固定到提交 SHA。
 
+## GitHub 仓库更名
+
+1. 选择没有发布或打标签任务运行的时段。用管理员账号进入原仓库 **Settings → General → Repository name**，将 `OriaTunnel` 改成 `OriaSSH` 并点击 **Rename**。在原仓库内改名会保留提交、Issues、PR 和 Releases。保留旧名空闲，GitHub 才能持续转发旧地址。[GitHub 仓库更名说明](https://docs.github.com/en/repositories/creating-and-managing-repositories/renaming-a-repository)
+2. 改名后在各本地克隆中执行下面的命令。第一条只更新该克隆的远程地址。第二条读取远端 `master` 的提交编号，可与改名前的编号比对。
+
+   ```sh
+   git remote set-url origin git@github.com:KrisLee1/OriaSSH.git
+   git ls-remote --exit-code origin refs/heads/master
+   ```
+
+3. 用下面的命令验证新旧地址都能取到同一份更新清单。已安装的 v0.5.0 使用旧地址。检查清单内四个平台的下载链接仍可打开，保留已发布安装包的原文件名、签名和标签。
+
+   ```sh
+   (
+     set -eu
+     check_dir=$(mktemp -d)
+     trap 'rm -rf "$check_dir"' EXIT
+     for repo in OriaTunnel OriaSSH; do
+       curl -fsSL "https://github.com/KrisLee1/$repo/releases/latest/download/latest.json" -o "$check_dir/$repo.json"
+     done
+     cmp "$check_dir/OriaTunnel.json" "$check_dir/OriaSSH.json"
+   )
+   ```
+
+4. 将本次更名改动合入 `master` 后再启动发布工作流，其中的仓库名判断已改为 `KrisLee1/OriaSSH`。下次发行使用高于 0.5.0 的版本，先在隔离的 macOS 和 Windows 安装中从 v0.5.0 更新，检查重启、工作区、登录启动及 VNC 关联。Windows 同时核对已有安装目录、卸载条目和快捷方式。
+
+macOS 应用内更新替换现有的应用包。原来装在 `/Applications/OriaTunnel.app` 的副本可继续使用该路径，应用内显示 OriaSSH。新的安装映像提供 `OriaSSH.app`。
+
+其他仓库若通过 `uses:` 引用由本仓库提供的 GitHub Action，需更新引用。项目级 GitHub Pages 站点也需单独检查访问地址。官网目前沿用已上线的 `oria-tunnel` 路径，网站切换时为旧路径设置跳转。[GitHub 仓库更名说明](https://docs.github.com/en/repositories/creating-and-managing-repositories/renaming-a-repository)
+
 ## 版本准备与本地预检
 
 0.5.0 的更新正文位于 [v0.5.0.md](releases/v0.5.0.md)。先同步四个应用版本文件，再运行下面的本地检查；`tools/update-verifier` 是独立验证工具，不随应用升版。签名测试中的历史版本与公开签名夹具保持绑定，不应批量替换为当前版本。
@@ -74,16 +104,16 @@ git push origin v0.5.0
 
 | 目标 | 安装包 | 更新包 | latest.json 平台键 |
 | --- | --- | --- | --- |
-| Windows x64 | `OriaTunnel_X.Y.Z_x64-setup.exe` | 同一 NSIS 安装器及 `.sig` | `windows-x86_64-nsis` |
-| Windows ARM64 | `OriaTunnel_X.Y.Z_arm64-setup.exe` | 同一 NSIS 安装器及 `.sig` | `windows-aarch64-nsis` |
-| macOS Apple Silicon | `OriaTunnel_X.Y.Z_aarch64.dmg` 及同名 DMG ZIP | `OriaTunnel_X.Y.Z_aarch64.app.tar.gz` 及 `.sig` | `darwin-aarch64` |
-| macOS Intel | `OriaTunnel_X.Y.Z_x64.dmg` 及同名 DMG ZIP | `OriaTunnel_X.Y.Z_x86_64.app.tar.gz` 及 `.sig` | `darwin-x86_64` |
+| Windows x64 | `OriaSSH_X.Y.Z_x64-setup.exe` | 同一 NSIS 安装器及 `.sig` | `windows-x86_64-nsis` |
+| Windows ARM64 | `OriaSSH_X.Y.Z_arm64-setup.exe` | 同一 NSIS 安装器及 `.sig` | `windows-aarch64-nsis` |
+| macOS Apple Silicon | `OriaSSH_X.Y.Z_aarch64.dmg` 及同名 DMG ZIP | `OriaSSH_X.Y.Z_aarch64.app.tar.gz` 及 `.sig` | `darwin-aarch64` |
+| macOS Intel | `OriaSSH_X.Y.Z_x64.dmg` 及同名 DMG ZIP | `OriaSSH_X.Y.Z_x86_64.app.tar.gz` 及 `.sig` | `darwin-x86_64` |
 
 macOS 沿用 `scripts/package-mac.sh --signed --target ...`：App 签名、公证及装订后放进 DMG；保留卷/Finder 文件图标后，对最终 DMG 签名、公证、装订并生成 DMG ZIP。Apple 票据服务网络错误（stapler 退出码 68）最多重试三次，其他失败立即停止，最终仍须装订及验证成功。更新 TAR 从最终带票据的 App 生成，禁用 AppleDouble 旁车文件，并重新解包核对单一 App 根目录、签名和装订票据；架构名称在签名前确定；DMG ZIP 不是应用内更新包。
 
 Windows 检查应用二进制的 PE 架构和 GUI 子系统；NSIS 自身的引导程序架构不能用来判断包内应用架构。当前流水线提供 Tauri 更新签名，未接入 Windows Authenticode 证书。
 
-许可证按仓库根目录 `LICENSE` 打包到应用的 `licenses/OriaTunnel_GPL-3.0.txt`。macOS 对最终 App 及更新 TAR 解包内容逐字节核对；Windows 核对 NSIS 的许可证页面输入和将原文安装到应用目录的资源指令，缺失或不一致即失败。
+许可证按仓库根目录 `LICENSE` 打包到应用的 `licenses/OriaSSH_GPL-3.0.txt`。macOS 对最终 App 及更新 TAR 解包内容逐字节核对；Windows 核对 NSIS 的许可证页面输入和将原文安装到应用目录的资源指令，缺失或不一致即失败。
 
 每个平台生成包含版本、目标、提交、许可证 SHA-256 及所有资产 SHA-256 的 receipt。汇总任务逐一验证四套 receipt、文件、哈希及 Minisign 版本/文件名绑定，然后生成唯一 `latest.json`。清单下载 URL 固定到版本标签；`.sig` 正文写入 `signature` 字段。草稿重试不会并发覆盖另一平台的清单。
 
@@ -96,7 +126,7 @@ GitHub 可能先为未公开草稿分配 `untagged-*` 占位标签。发布器�
 成功后客户端入口为：
 
 ```text
-https://github.com/KrisLee1/OriaTunnel/releases/latest/download/latest.json
+https://github.com/KrisLee1/OriaSSH/releases/latest/download/latest.json
 ```
 
 Release 草稿尚未公开时，该地址可以返回 404。第一份正式清单的版本若与已安装客户端相同，不会提示更新；客户端只接受更高的稳定版本。首次不含 Updater 或使用旧公钥的构建，需要手动安装兼容版本一次。

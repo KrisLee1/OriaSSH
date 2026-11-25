@@ -3,6 +3,7 @@ import { emptyRule } from "./rule-model";
 import {
   projectCardRuntimes,
   projectCanvasEdges,
+  projectCanvasRoutes,
   type CardRuntime,
 } from "./canvas-runtime";
 import type { Runtime } from "@/types";
@@ -32,6 +33,38 @@ const byRule = (items: CardRuntime[]) =>
   new Map(items.map((item) => [item.ruleId, item]));
 
 describe("canvas updates from native runtime facts", () => {
+  it("keeps the live route and allocated port until the worker stops", () => {
+    const saved = {
+      ...rules[0],
+      kind: "R" as const,
+      hostId: "next",
+      bindPort: 8040,
+    };
+    const runtime = {
+      ...runtimes()[0],
+      configurationChanged: true,
+      activeRoute: rules[0],
+      boundAddress: "127.0.0.1",
+      boundPort: 51842,
+    };
+    const live = projectCanvasRoutes([saved], [runtime], []);
+    expect(live[0]).toMatchObject({
+      hostId: "host",
+      kind: "L",
+      bindPort: 51842,
+    });
+    expect(
+      projectCanvasRoutes([saved], [{ ...runtime, sent: 4096 }], live),
+    ).toBe(live);
+    expect(
+      projectCanvasRoutes(
+        [saved],
+        [{ ...runtime, status: "stopped" }],
+        live,
+      )[0],
+    ).toBe(saved);
+  });
+
   it("ignores uptime/history ticks on cards while preserving full snapshots for details", () => {
     const initial = runtimes();
     let cards = projectCardRuntimes(initial);
@@ -74,6 +107,26 @@ describe("canvas updates from native runtime facts", () => {
       expect(next[0]).not.toBe(cards[0]);
       expect(next[0]).toMatchObject(change);
     }
+  });
+
+  it("changes a wire only when native traffic starts or ends", () => {
+    const live = runtimes();
+    const project = (before?: ReturnType<typeof projectCanvasEdges>) =>
+      projectCanvasEdges(rules, new Map(live.map(item => [item.ruleId, item])), before);
+    const idle = project();
+    expect(idle[0].data?.state).toBe("connected");
+    live[0].receivedPerSecond = 512;
+    const busy = project(idle);
+    expect(busy[0].data?.state).toBe("transferring");
+    expect(busy[1]).toBe(idle[1]);
+    live[0].receivedPerSecond = 0;
+    live[0].sentPerSecond = 32;
+    expect(project(busy)).toBe(busy);
+    live[0].sentPerSecond = 0;
+    expect(project(busy)[0].data?.state).toBe("connected");
+    live[0].sentPerSecond = 32;
+    live[0].status = "stopped";
+    expect(project(busy)[0].data?.state).toBe("stopped");
   });
 
   it("accepts status, color, route, direction, insertion and removal changes", () => {

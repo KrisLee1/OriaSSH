@@ -1,17 +1,49 @@
 import { Position } from "@xyflow/react";
-import type { Snapshot } from "@/types";
-import type { PortPlacement } from "./port-placement";
-import { localCardSize, localPortSide } from "./canvas-state";
-import { groupPositions, groupRulesByHost } from "./rule-groups";
+import type { Host, RemoteService, Rule } from "@/types";
+import { emptyRule } from "./rule-model";
+import { directProtocol } from "@/features/commands/direct-protocol";
 
-type Point = { x: number; y: number };
-type Size = { width: number; height: number };
-export type CanvasCreation = {
-  ruleId: string;
-  hostId: string;
-  newHost: boolean;
-  placement: PortPlacement;
-};
+export type CanvasPoint = { x: number; y: number };
+
+export function serviceLocalForward(hostId: string, service: RemoteService, rules: Rule[]): Rule | undefined {
+  const { port } = service;
+  if (!port || !Number.isInteger(port) || port < 1 || port > 65535) return;
+  const targets = new Set(rules.filter(rule =>
+    rule.hostId === hostId && rule.kind === "L" && service.ruleIds.includes(rule.id),
+  ).map(rule => rule.targetHost));
+  const protocol = directProtocol(service, rules, hostId);
+  const defaults = emptyRule(hostId);
+  return {
+    ...defaults,
+    name: service.name,
+    color: service.color ?? null,
+    icon: service.icon ?? null,
+    targetPort: port,
+    targetHost: targets.size === 1 ? [...targets][0] : defaults.targetHost,
+    serviceProtocol: protocol === "http" || protocol === "https" || protocol === "vnc" ? protocol : null,
+  };
+}
+
+export function hostForwardDraft(hostId: string, kind: "R" | "D"): Rule {
+  return { ...emptyRule(hostId), kind, targetPort: 0, name: kind === "D" ? "SOCKS5" : "" };
+}
+
+export function localForwardServiceIds(host: Host, rules: Rule[], services: RemoteService[]) {
+  const linked = new Map(services.flatMap(service => service.ruleIds.map(id => [id, service.id] as const)));
+  const localAddresses = new Set([host.address.toLowerCase(), "localhost", "127.0.0.1", "::1"]);
+  const matches = new Map<string, string>();
+  for (const rule of rules) {
+    if (rule.kind !== "L") continue;
+    const explicit = linked.get(rule.id);
+    if (explicit) {
+      matches.set(rule.id, explicit);
+    } else if (localAddresses.has(rule.targetHost.toLowerCase())) {
+      const candidates = services.filter(service => service.port === rule.targetPort);
+      if (candidates.length === 1) matches.set(rule.id, candidates[0].id);
+    }
+  }
+  return matches;
+}
 
 export function oppositeSide(side: Position) {
   return {
@@ -22,74 +54,36 @@ export function oppositeSide(side: Position) {
   }[side];
 }
 
-export function createdCanvasLayout(
-  data: Pick<Snapshot, "rules" | "hosts">,
-  creation: CanvasCreation,
-  positions: Record<string, Point>,
-  placements: Record<string, PortPlacement>,
-  measured: Record<string, Size> = {},
+export function serviceEndpointSide(localX: number, hostX: number) {
+  return localX <= hostX ? Position.Left : Position.Right;
+}
+
+type Size = { width: number; height: number };
+export type HostPlacement = { ids: string[]; origin: CanvasPoint | null };
+type Bounds = CanvasPoint & Size;
+
+// Try the requested spot, then the nearest free space beside a measured card.
+export function availableHostPosition(
+  origin: CanvasPoint,
+  size: Size,
+  occupied: Bounds[],
 ) {
-  const portPlacements = {
-    ...placements,
-    [creation.ruleId]: creation.placement,
-  };
-  if (!creation.newHost) return { positions, portPlacements };
-  const groups = groupRulesByHost(data.rules, data.hosts);
-  const resolved = groupPositions(groups, positions);
-  const local = positions.local || { x: 0, y: 0 };
-  const size = localCardSize(
-    data.rules.map((rule) => ({
-      side:
-        portPlacements[rule.id]?.side ||
-        localPortSide(local, resolved[`host:${rule.hostId}`]),
-    })),
-  );
-  const id = `host:${creation.hostId}`;
-  const hostSize = measured[id] || { width: 360, height: 224 };
-  const { side, offset } = creation.placement;
-  const vertical = side === Position.Top || side === Position.Bottom;
-  const base = vertical
-    ? {
-        x: local.x + size.width * offset - hostSize.width / 2,
-        y:
-          side === Position.Top
-            ? local.y - 220 - hostSize.height
-            : local.y + size.height + 220,
-      }
-    : {
-        x:
-          side === Position.Left
-            ? local.x - 220 - hostSize.width
-            : local.x + size.width + 220,
-        y: local.y + size.height * offset - hostSize.height / 2,
-      };
-  const occupied = groups
-    .filter((group) => group.id !== id)
-    .map((group) => ({
-      ...resolved[group.id],
-      ...(measured[group.id] || { width: 360, height: 224 }),
-    }));
-  const step = (vertical ? hostSize.width : hostSize.height) + 64;
-  let position = base;
-  for (let attempt = 0; attempt <= occupied.length * 2 + 2; attempt++) {
-    const shift =
-      attempt === 0
-        ? 0
-        : Math.ceil(attempt / 2) * step * (attempt % 2 ? 1 : -1);
-    position = {
-      x: base.x + (vertical ? shift : 0),
-      y: base.y + (vertical ? 0 : shift),
-    };
-    if (
-      !occupied.some(
-        (other) =>
-          position.x < other.x + other.width + 32 &&
-          position.x + hostSize.width + 32 > other.x &&
-          position.y < other.y + other.height + 32 &&
-          position.y + hostSize.height + 32 > other.y,
-      )
-    )
-      break;
-  }
-  return { positions: { ...positions, [id]: position }, portPlacements };
+  const gap = 32;
+  const overlaps = (point: CanvasPoint, rect: Bounds) =>
+    point.x < rect.x + rect.width + gap &&
+    rect.x < point.x + size.width + gap &&
+    point.y < rect.y + rect.height + gap &&
+    rect.y < point.y + size.height + gap;
+  if (!occupied.some((rect) => overlaps(origin, rect))) return origin;
+  const candidates = occupied.flatMap((rect) => [
+    { x: rect.x + rect.width + gap, y: origin.y },
+    { x: rect.x - size.width - gap, y: origin.y },
+    { x: origin.x, y: rect.y + rect.height + gap },
+    { x: origin.x, y: rect.y - size.height - gap },
+  ]);
+  const distance = (point: CanvasPoint) =>
+    Math.hypot(point.x - origin.x, point.y - origin.y);
+  return candidates
+    .sort((a, b) => distance(a) - distance(b))
+    .find((point) => !occupied.some((rect) => overlaps(point, rect)))!;
 }

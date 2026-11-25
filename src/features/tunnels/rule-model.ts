@@ -1,4 +1,10 @@
-import type { Host, Rule, ConnectionOptions } from "@/types";
+import type {
+  Host,
+  Rule,
+  ForwardRoute,
+  Runtime,
+  ConnectionOptions,
+} from "@/types";
 
 export const defaultConnection = (): ConnectionOptions => ({
   connectTimeoutSecs: 15,
@@ -49,7 +55,7 @@ export const emptyRule = (hostId = ""): Rule => ({
   serviceProtocol: null,
   kind: "L",
   bindAddress: "127.0.0.1",
-  bindPort: 15432,
+  bindPort: 0,
   targetHost: "127.0.0.1",
   targetPort: 5432,
   connection: null,
@@ -65,12 +71,46 @@ export const emptyRule = (hostId = ""): Rule => ({
   autoConnect: false,
   repeatCommandOnReconnect: false,
 });
-export function endpoint(host: string, port: number) {
+export function endpoint(host: string, port: number | string) {
   return `${host.includes(":") ? `[${host}]` : host}:${port}`;
 }
-export function rulePath(rule: Rule, host: string, local = "此电脑") {
-  const bind = endpoint(rule.bindAddress, rule.bindPort);
-  const target = endpoint(rule.targetHost, rule.targetPort);
+export function displayedRoute(
+  rule: Rule,
+  runtime?: Pick<
+    Runtime,
+    "status" | "activeRoute" | "boundAddress" | "boundPort"
+  >,
+): Rule {
+  if (
+    !runtime ||
+    ["failed", "stopped", "needs-attention"].includes(runtime.status)
+  )
+    return rule;
+  const route = runtime.activeRoute;
+  const active = route ? { ...rule, ...route } : rule;
+  if (
+    runtime.status !== "listening" ||
+    !runtime.boundPort ||
+    active.kind === "R"
+  )
+    return active;
+  return {
+    ...active,
+    bindAddress: runtime.boundAddress || active.bindAddress,
+    bindPort: runtime.boundPort,
+  };
+}
+export function rulePath(
+  rule: ForwardRoute,
+  host: string,
+  local = "此电脑",
+  auto = "Auto",
+) {
+  const bind = endpoint(
+    rule.bindAddress,
+    rule.bindPort || (rule.kind === "R" ? "…" : auto),
+  );
+  const target = endpoint(rule.targetHost, rule.targetPort || "…");
   if (rule.kind === "R") return `${host} ${bind} → ${local} ${target}`;
   if (rule.kind === "D") return `${local} SOCKS5 ${bind} → ${host} (DNS / TCP)`;
   return `${local} ${bind} → ${host} ${target}`;
@@ -83,6 +123,7 @@ export function networkChanged(before: Rule, after: Rule) {
     serviceProtocol: _serviceA,
     background: _backgroundA,
     autoConnect: _autoA,
+    loginIdentityId: beforeLogin,
     ...a
   } = before;
   const {
@@ -92,7 +133,9 @@ export function networkChanged(before: Rule, after: Rule) {
     serviceProtocol: _serviceB,
     background: _backgroundB,
     autoConnect: _autoB,
+    loginIdentityId: afterLogin,
     ...b
   } = after;
-  return JSON.stringify(a) !== JSON.stringify(b);
+  return (beforeLogin ?? `primary:${before.hostId}`) !== (afterLogin ?? `primary:${after.hostId}`) ||
+    JSON.stringify(a) !== JSON.stringify(b);
 }

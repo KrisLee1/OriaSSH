@@ -1,6 +1,6 @@
 #[path = "common/command_server.rs"]
 mod server;
-use oria_tunnel_lib::{
+use oria_ssh_lib::{
     commands::{self, Action, Manager, Run},
     model::{timestamp, AuthMethod, Host},
     tunnel,
@@ -17,6 +17,7 @@ fn run(id: &str) -> Run {
         action_id: "action".into(),
         service_revision: "v1".into(),
         host_id: "target".into(),
+        login_id: None,
         host_name: "isolated".into(),
         endpoint: "tester@127.0.0.1".into(),
         action_label: "test".into(),
@@ -59,6 +60,8 @@ fn request(port: u16, command: &str, timeout: u64) -> commands::Request {
             expected: None,
         }],
         action: Action {
+            systemd_launch: None,
+            service_port_variable: false,
             invocation: None,
             mode: Default::default(),
             id: "action".into(),
@@ -266,7 +269,7 @@ async fn multi_hop_exec_uses_shared_authentication_and_closes_without_forward_li
 
 #[tokio::test(flavor = "multi_thread")]
 async fn cancelling_a_command_keeps_an_independent_forward_on_the_same_host_working() {
-    use oria_tunnel_lib::model::Rule;
+    use oria_ssh_lib::model::Rule;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let (port, _, server) = server::start().await;
     let echo = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

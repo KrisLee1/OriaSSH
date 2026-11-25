@@ -59,7 +59,7 @@ export function checkSecrets({ config = path.join(root, 'src-tauri/tauri.conf.js
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'oria-signing-check-'));
   try {
     const probe = path.join(temporary, 'signing-probe.txt');
-    fs.writeFileSync(probe, `OriaTunnel signing preflight ${randomBytes(32).toString('hex')}\n`);
+    fs.writeFileSync(probe, `OriaSSH signing preflight ${randomBytes(32).toString('hex')}\n`);
     // Signing keys are passed only through the signer's environment. Suppress
     // its captured diagnostics so malformed secret values can never reach logs.
     signArtifact(probe, version, { ...clean, ...signing });

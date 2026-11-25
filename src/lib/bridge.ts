@@ -4,11 +4,15 @@ import type {
   Snapshot,
   DirectProtocol,
   Host,
+  HostDeletionImpact,
+  LoginIdentity,
   Rule,
   BatchResult,
   ImportPreview,
   ImportChoices,
   ImportSource,
+  ConfigExportSelection,
+  ConfigExportPreview,
   ResolvedApplicationIcon,
   UpdateSnapshot,
 } from "@/types";
@@ -55,25 +59,36 @@ export const syncHosts = () =>
   invoke<Snapshot>("refresh_hosts", { manual: false });
 export const setHostSources = (files: string[], autoSync: boolean) =>
   invoke<Snapshot>("set_host_sources", { files, autoSync });
-export const saveHost = (host: Host) => invoke<Snapshot>("save_host", { host });
-export const setHostServices = (
-  hostId: string,
-  links: import("@/types").ServiceLink[],
-) => invoke<Snapshot>("set_host_services", { hostId, links });
+type HostPasswordEdit = { loginId: string; password?: string; clearPassword: boolean };
+export const saveHost = (host: Host, passwordEdit?: HostPasswordEdit) =>
+  invoke<Snapshot>("save_host", { host, passwordEdit });
+export const saveLoginCredential = (credential: LoginIdentity, password?: string, clearPassword = false) =>
+  invoke<Snapshot>("save_login_credential", { credential, password, clearPassword });
+export const loginCredentialPasswordStatus = (id: string) =>
+  invoke<PasswordStatus>("login_credential_password_status", { id });
+export const deleteLoginCredential = (id: string) =>
+  invoke<Snapshot>("delete_login_credential", { id });
 export const addDiscoveredHosts = (ids: string[]) =>
   invoke<Snapshot>("add_discovered_hosts", { ids });
 export const pickIdentityFile = () =>
   invoke<string | null>("pick_identity_file");
 export const pickSshConfigFile = () =>
   invoke<string | null>("pick_ssh_config_file");
-export const saveHostMetadata = (host: Host) =>
+export const saveHostMetadata = (host: Host, passwordEdit?: HostPasswordEdit) =>
   invoke<Snapshot>("save_host_metadata", {
     id: host.id,
     name: host.name,
     tags: host.tags,
+    loginSettings: {
+      identities: host.logins ?? [],
+      credentialIds: host.credentialIds ?? [],
+      defaultId: host.defaultLoginId ?? null,
+      passwordEdit,
+    },
+    appearance: host.appearance ?? null,
   });
-export const openService = (id: string, internalVnc?: boolean) =>
-  invoke<void>("open_service", { id, internalVnc });
+export const openService = (id: string, internalVnc?: boolean, service?: { id: string; revision: string; protocol: DirectProtocol }) =>
+  invoke<void>("open_service", { id, internalVnc, service });
 export const openHostService = (hostId: string, serviceId: string, revision: string, protocol: DirectProtocol, internalVnc = false) =>
   invoke<void>("open_host_service", { hostId, serviceId, revision, protocol, internalVnc });
 export const chooseDefaultVnc = () => invoke<void>("choose_default_vnc");
@@ -92,10 +107,15 @@ export const deleteRule = (id: string) =>
   invoke<Snapshot>("delete_rule", { id });
 export const deleteRules = (ids: string[]) =>
   invoke<Snapshot>("delete_rules", { ids });
-export const hostHasActiveWork = (id: string) =>
-  invoke<boolean>("host_has_active_work", { id });
-export const deleteHost = (id: string, expectedRuleIds: string[], stopActive: boolean) =>
-  invoke<Snapshot>("delete_host", { id, expectedRuleIds, stopActive });
+export const previewHostDeletion = (id: string) =>
+  invoke<HostDeletionImpact>("preview_host_deletion", { id });
+export const deleteHost = (id: string, impact: HostDeletionImpact, stopActive: boolean) =>
+  invoke<Snapshot>("delete_host", {
+    id,
+    expectedRuleIds: impact.rules.map((rule) => rule.id),
+    expectedServices: impact.services,
+    stopActive,
+  });
 export const hideHost = (id: string, hidden: boolean) =>
   invoke<Snapshot>("hide_host", { id, hidden });
 export const setCloseToTray = (enabled: boolean) =>
@@ -110,17 +130,17 @@ export const startBatch = (
   ids: string[],
   secrets: Record<string, string>,
   rememberHostIds: string[] = [],
-) => invoke<BatchResult[]>("start_batch", { ids, secrets, rememberHostIds });
+) => invoke<BatchResult[]>("start_batch", { ids, secrets, rememberHostIds, identityKeys: true });
 export type PasswordStatus = {
   id: string;
   supported: boolean;
   saved: boolean;
   error: string | null;
 };
-export const passwordStatus = (ids: string[]) =>
-  invoke<PasswordStatus[]>("password_status", { ids });
-export const clearPassword = (id: string) =>
-  invoke<void>("clear_password", { id });
+export const passwordStatus = (ids: string[], loginId?: string) =>
+  invoke<PasswordStatus[]>("password_status", { ids, loginId });
+export const clearPassword = (id: string, loginId?: string) =>
+  invoke<void>("clear_password", { id, loginId });
 export const stopBatch = (ids: string[]) =>
   invoke<BatchResult[]>("stop_batch", { ids });
 export const exportConfig = (ids: string[], serviceIds: string[] = []) =>
@@ -129,6 +149,10 @@ export const exportConfig = (ids: string[], serviceIds: string[] = []) =>
     serviceIds,
     includeKeyPaths: false,
   });
+export const previewConfigExport = (selection: ConfigExportSelection) =>
+  invoke<ConfigExportPreview>("preview_config_export", { selection });
+export const exportWorkspaceConfig = (selection: ConfigExportSelection, fingerprint: string) =>
+  invoke<string | null>("export_workspace_config", { selection, fingerprint });
 export const previewImport = (source: ImportSource) =>
   invoke<ImportPreview>("preview_import_file", { source });
 export const commitImport = (token: string, choices: ImportChoices) =>
@@ -139,14 +163,16 @@ export const startRule = (
   secret: string,
   jumpSecrets: Record<string, string> = {},
   rememberHostIds: string[] = [],
-) => invoke("start_rule", { id, secret, jumpSecrets, rememberHostIds });
+  loginId?: string,
+) => invoke("start_rule", { id, secret, jumpSecrets, rememberHostIds, loginId });
 export const stopRule = (id: string) => invoke("stop_rule", { id });
 export const testHost = (
   id: string,
   secret: string,
   jumpSecrets: Record<string, string> = {},
   rememberHostIds: string[] = [],
-) => invoke("test_host", { id, secret, jumpSecrets, rememberHostIds });
+  loginId?: string,
+) => invoke("test_host", { id, secret, jumpSecrets, rememberHostIds, loginId });
 export const trustHost = (id: string, runId: string, fingerprint: string) =>
   invoke("trust_host", { id, runId, fingerprint });
 
@@ -164,6 +190,7 @@ const executionTarget = <T extends { ruleId?: string }>(request: T) => {
   return { ...request, ruleId: undefined, hostId: request.ruleId.slice(5) };
 };
 export const startCommand = (request: {
+  loginId?: string;
   serviceId: string;
   actionId: string;
   ruleId?: string;
@@ -253,3 +280,5 @@ export const previewServiceTemplate = (kind: string, resource: string) =>
     kind,
     resource,
   });
+
+export const previewServiceCommands = (id: string, revision: string) => invoke<Record<string, string>>("preview_service_commands", { id, revision });

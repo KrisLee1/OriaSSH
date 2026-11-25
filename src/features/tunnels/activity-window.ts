@@ -44,7 +44,7 @@ export function activityItems(
         kind: "record",
         key: `${key}:${occurrence}`,
         row,
-        height: 84,
+        height: 68,
       });
     });
   }

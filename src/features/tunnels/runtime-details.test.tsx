@@ -29,15 +29,26 @@ describe("runtime unit conversion", () => {
   });
 });
 describe("runtime evidence", () => {
-  it("shows unmeasured values without inventing authentication or traffic", () => {
+  it("shows the configured connection and unmeasured traffic without fabricating counters", () => {
     const html = renderToStaticMarkup(
-      <RuntimeDetails rule={emptyRule("fixture")} hostName="fixture" />,
+      <RuntimeDetails
+        rule={emptyRule("fixture")}
+        hostName="fixture"
+        savedLogin={{ user: "saved-user", authMethod: "privateKey" }}
+      />,
     );
-    expect(html).toContain(text("unknown"));
-    expect(html).toContain(text("unmeasured"));
+    expect(html).toContain(text("stopped"));
+    expect(html).toContain(text("connectionInfo"));
+    expect(html).toContain("saved-user");
+    expect(html).toContain(text("configuredAuthMethod"));
+    expect(html).toContain(text("authPrivateKey"));
     expect(html).not.toContain("0 B");
-    expect(html).not.toContain(text("authAuto"));
-    expect(html).not.toContain("<svg");
+    expect(html).toContain(text("targetHealth"));
+    expect(html).toContain(text("unknown"));
+    expect(html).toContain(text("trafficWindow"));
+    expect(html).toContain(text("unmeasured"));
+    expect(html).toContain(text("autoPort"));
+    expect(html).not.toContain("<polyline");
   });
   it("keeps a target refusal distinct from listening and renders measured samples", () => {
     const runtime: Runtime = {
@@ -76,9 +87,10 @@ describe("runtime evidence", () => {
     expect(html).toContain(text("listening"));
     expect(html).toContain(text("unreachable"));
     expect(html).toContain(text("authPassword"));
-    expect(html).toContain(text("targetHealthHint"));
+    expect(html).toContain(`<summary>${text("forwardDiagnostics")}</summary>`);
+    expect(html).toContain(text("runId"));
     expect(html).toContain("1.0 KiB");
-    expect(html).toContain("<svg");
+    expect(html).toContain("traffic-chart");
     const idle = renderToStaticMarkup(
       <RuntimeDetails
         rule={emptyRule("fixture")}
@@ -93,8 +105,8 @@ describe("runtime evidence", () => {
         }}
       />,
     );
+    expect(idle).toContain("1.0 KiB");
     expect(idle).toContain(text("noRecentTraffic"));
-    expect(idle).not.toContain(text("unmeasured"));
-    expect(idle).not.toContain("<svg");
+    expect(idle).toContain('points="0,70 300,70"');
   });
 });

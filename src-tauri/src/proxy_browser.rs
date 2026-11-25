@@ -32,15 +32,17 @@ pub fn endpoint(rule: &Rule, active: &Rule, runtime: &Runtime) -> Result<String,
     if runtime.rule_id != rule.id || runtime.status != "listening" {
         return Err(crate::native_message::plain("startForward"));
     }
-    let address = match active.bind_address.as_str() {
+    let bound = runtime.bound_address.map(|ip| ip.to_string());
+    let address = match bound.as_deref().unwrap_or(&active.bind_address) {
         "127.0.0.1" => "127.0.0.1",
         "::1" => "[::1]",
         _ => return Err(crate::native_message::plain("proxyBrowserDynamic")),
     };
-    if active.bind_port == 0 {
+    let port = runtime.bound_port.unwrap_or(active.bind_port);
+    if port == 0 {
         return Err(crate::native_message::plain("servicePort"));
     }
-    Ok(format!("socks5://{address}:{}", active.bind_port))
+    Ok(format!("socks5://{address}:{port}"))
 }
 
 #[cfg(any(windows, target_os = "macos", test))]
@@ -330,6 +332,18 @@ mod tests {
             rule.kind = kind;
             assert!(endpoint(&rule, &rule, &runtime).is_err());
         }
+    }
+    #[test]
+    fn automatic_proxy_uses_this_runs_port() {
+        let (mut rule, mut runtime) = fixture();
+        rule.bind_port = 0;
+        assert!(endpoint(&rule, &rule, &runtime).is_err());
+        runtime.bound_address = Some("127.0.0.1".parse().unwrap());
+        runtime.bound_port = Some(51843);
+        assert_eq!(
+            endpoint(&rule, &rule, &runtime).unwrap(),
+            "socks5://127.0.0.1:51843"
+        );
     }
     #[test]
     fn isolates_profiles_and_uses_literal_arguments_without_a_shell() {

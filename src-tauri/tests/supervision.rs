@@ -1,5 +1,5 @@
 //! All sockets/identities here are private loopback fixtures; never use a user host/agent.
-use oria_tunnel_lib::{
+use oria_ssh_lib::{
     model::{AuthMethod, FailureKind, Host, Rule, Runtime},
     supervisor, tunnel,
 };
@@ -165,7 +165,7 @@ async fn request(port: u16, fingerprint: String) -> tunnel::RunRequest {
             bind_port,
             target_host: "127.0.0.1".into(),
             target_port: 1,
-            reconnect: oria_tunnel_lib::model::ReconnectPolicy {
+            reconnect: oria_ssh_lib::model::ReconnectPolicy {
                 initial_delay_secs: 1,
                 max_delay_secs: 1,
                 max_attempts: 2,
@@ -321,7 +321,7 @@ async fn loopback_batch_partial_failure_does_not_block_an_independent_listener()
     let events = Arc::new(Mutex::new(Vec::new()));
     let (_wake, rx) = watch::channel(0);
     let mut jobs = Vec::new();
-    let result = oria_tunnel_lib::batch::start(
+    let result = oria_ssh_lib::batch::start(
         vec![
             "missing".into(),
             "bad-auth".into(),

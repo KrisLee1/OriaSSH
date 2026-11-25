@@ -1,6 +1,8 @@
-//! Finite service operations. Only explicitly repeatable read-only probes may repeat.
+//! Service operations. Only explicitly repeatable read-only probes may repeat.
+mod tigervnc;
+
 use crate::{
-    commands::{Action, ExecutionMode, Manager as Commands},
+    commands::{execution_deadline, Action, ExecutionMode, Manager as Commands, EXIT_DRAIN_TIME},
     model::{timestamp, FailureKind, Runtime},
     tunnel,
 };
@@ -68,7 +70,7 @@ impl Control {
             return Err("invalidProbe".into());
         }
         if let Some(p) = &self.status_probe {
-            if !["output", "exitCode", "json"].contains(&p.mode.as_str())
+            if !["output", "exitCode", "json", "vncSessions"].contains(&p.mode.as_str())
                 || !actions.iter().any(|a| {
                     a.id == p.action_id
                         && a.kind == "status"
@@ -96,9 +98,12 @@ impl Control {
             }
         }
         if self.start_action_id.as_ref().is_some_and(|id| {
-            !actions
-                .iter()
-                .any(|a| &a.id == id && a.kind == "start" && a.mode == ExecutionMode::Command)
+            !actions.iter().any(|a| {
+                &a.id == id
+                    && a.kind == "start"
+                    && a.mode == ExecutionMode::Command
+                    && a.timeout_secs > 0
+            })
         }) {
             return Err("invalidProbe".into());
         }
@@ -139,6 +144,7 @@ impl Fact {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Observation {
+    pub login_id: Option<String>,
     pub host_id: Option<String>,
     #[serde(default)]
     pub rule_id: Option<String>,
@@ -154,6 +160,49 @@ pub struct Observations {
     entries: Mutex<BTreeMap<(String, String), Observation>>,
 }
 impl Observations {
+    pub(crate) fn running_vnc_user(
+        &self,
+        service: &crate::commands::Service,
+        host: &crate::model::Host,
+        hosts: &[crate::model::Host],
+    ) -> Option<String> {
+        let vnc_inventory = service.control.status_probe.as_ref().map_or_else(
+            || service.actions.iter().any(tigervnc::list_action),
+            |probe| probe.mode == "vncSessions",
+        );
+        if !vnc_inventory {
+            return None;
+        }
+        let primary = crate::model::primary_login_id(&host.id);
+        let logins = (!host.credential_only)
+            .then_some(primary.as_str())
+            .into_iter()
+            .chain(host.logins.iter().map(|login| login.id.as_str()));
+        let now = timestamp();
+        let mut verified_user = None;
+        for id in logins {
+            let Ok(login) = host.login(Some(id)) else {
+                continue;
+            };
+            let Ok(mut route) = crate::model::resolve_jumps(hosts, &login) else {
+                continue;
+            };
+            route.push(login);
+            let status = self.view(service, &identity(&route), now).status;
+            if status.value == "running" && !status.expired {
+                let user = &route.last()?.user;
+                if verified_user
+                    .as_ref()
+                    .is_some_and(|previous| previous != user)
+                {
+                    return None;
+                }
+                verified_user = Some(user.clone());
+            }
+        }
+        verified_user
+    }
+
     pub fn view(
         &self,
         service: &crate::commands::Service,
@@ -167,6 +216,7 @@ impl Observations {
             .get(&(service.id.clone(), identity.into()))
             .cloned()
             .unwrap_or_else(|| Observation {
+                login_id: None,
                 host_id: None,
                 rule_id: None,
                 service_id: service.id.clone(),
@@ -197,6 +247,7 @@ impl Observations {
         self.store(
             (s.id.clone(), identity.into()),
             Observation {
+                login_id: None,
                 host_id: None,
                 rule_id: None,
                 service_id: s.id.clone(),
@@ -246,7 +297,7 @@ pub fn identity(route: &[crate::model::Host]) -> String {
         .iter()
         .map(|h| {
             (
-                &h.id,
+                (&h.id, &h.active_login_id),
                 &h.address,
                 h.port,
                 &h.user,
@@ -329,6 +380,7 @@ async fn channel(
     validate: &Arc<dyn Fn() -> bool + Send + Sync>,
     output: impl Fn(&str, &[u8]),
     submitted: impl Fn(),
+    foreground: impl Fn(),
 ) -> Outcome {
     let mut out = Outcome::failed("notExecuted");
     let opened = tokio::select! {biased;_=cancel.cancelled()=>None,r=tokio::time::timeout(Duration::from_secs(15),connection.open_session())=>r.ok().and_then(Result::ok)};
@@ -337,6 +389,38 @@ async fn channel(
             out.phase = "cancelled";
         }
         return out;
+    };
+    let mut count = 0usize;
+    let mut receive = |out: &mut Outcome, message| match message {
+        ChannelMsg::Data { data } => {
+            count = count.saturating_add(data.len());
+            if out.stdout.len() + data.len() <= 65536 {
+                out.stdout.extend_from_slice(&data);
+            } else {
+                out.truncated = true;
+            }
+            output("stdout", &data);
+        }
+        ChannelMsg::ExtendedData { data, .. } => {
+            count = count.saturating_add(data.len());
+            output("stderr", &data);
+        }
+        ChannelMsg::ExitStatus { exit_status } => out.code = Some(exit_status),
+        ChannelMsg::ExitSignal { signal_name, .. } => out.signal = Some(format!("{signal_name:?}")),
+        _ => {}
+    };
+    let finished = |out: &Outcome| {
+        if out.signal.is_some() {
+            ("failed", Some("exitSignal".into()))
+        } else if let Some(code) = out.code {
+            if action.success_codes.contains(&code) {
+                ("succeeded", None)
+            } else {
+                ("failed", Some("exitCode".into()))
+            }
+        } else {
+            ("unknown", Some("remoteUnknown".into()))
+        }
     };
     let result = async {
         if cancel.is_cancelled() || !validate() {
@@ -351,52 +435,67 @@ async fn channel(
         {
             return ("unknown", Some("remoteUnknown".into()));
         }
-        let mut count = 0usize;
         loop {
             match ch.wait().await {
                 Some(ChannelMsg::Failure) => return ("failed", Some("execRejected".into())),
-                Some(ChannelMsg::Data { data }) => {
-                    count = count.saturating_add(data.len());
-                    if out.stdout.len() + data.len() <= 65536 {
-                        out.stdout.extend_from_slice(&data);
-                    } else {
-                        out.truncated = true;
+                Some(ChannelMsg::Success) if action.timeout_secs == 0 => foreground(),
+                Some(ChannelMsg::Close) | None => return finished(&out),
+                Some(message) => {
+                    receive(&mut out, message);
+                    if out.code.is_some() || out.signal.is_some() {
+                        return finished(&out);
                     }
-                    output("stdout", &data);
                 }
-                Some(ChannelMsg::ExtendedData { data, .. }) => {
-                    count = count.saturating_add(data.len());
-                    output("stderr", &data);
-                }
-                Some(ChannelMsg::ExitStatus { exit_status }) => out.code = Some(exit_status),
-                Some(ChannelMsg::ExitSignal { signal_name, .. }) => {
-                    out.signal = Some(format!("{signal_name:?}"))
-                }
-                Some(ChannelMsg::Close) | None => {
-                    out.truncated |= count > 65536;
-                    return if out.signal.is_some() {
-                        ("failed", Some("exitSignal".into()))
-                    } else if let Some(code) = out.code {
-                        if action.success_codes.contains(&code) {
-                            ("succeeded", None)
-                        } else {
-                            ("failed", Some("exitCode".into()))
-                        }
-                    } else {
-                        ("unknown", Some("remoteUnknown".into()))
-                    };
-                }
-                _ => {}
             }
         }
     };
-    let result = tokio::select! {biased;_=cancel.cancelled()=>("cancelled",Some("remoteUnknown".into())),r=tokio::time::timeout(Duration::from_secs(action.timeout_secs),result)=>r.unwrap_or(("timedOut",Some("remoteUnknown".into())))};
-    if matches!(result.0, "cancelled" | "timedOut") {
-        let _ = tokio::time::timeout(Duration::from_millis(500), ch.signal(Sig::TERM)).await;
+    let result = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => ("cancelled", Some("remoteUnknown".into())),
+        result = result => result,
+        _ = execution_deadline(action.timeout_secs) => ("timedOut", Some("remoteUnknown".into())),
+    };
+    if out.code.is_some() || out.signal.is_some() {
+        let _ = tokio::time::timeout(EXIT_DRAIN_TIME, async {
+            while let Some(message) = ch.wait().await {
+                if matches!(message, ChannelMsg::Eof | ChannelMsg::Close) {
+                    break;
+                }
+                receive(&mut out, message);
+            }
+        })
+        .await;
+    }
+    if matches!(result.0, "cancelled" | "timedOut")
+        && out.submitted
+        && out.code.is_none()
+        && out.signal.is_none()
+    {
+        let _ = tokio::time::timeout(Duration::from_secs(2), async {
+            if ch.signal(Sig::TERM).await.is_ok() {
+                while let Some(message) = ch.wait().await {
+                    if matches!(message, ChannelMsg::Close | ChannelMsg::Failure) {
+                        break;
+                    }
+                    receive(&mut out, message);
+                    if out.code.is_some() || out.signal.is_some() {
+                        break;
+                    }
+                }
+            }
+        })
+        .await;
     }
     let _ = tokio::time::timeout(Duration::from_millis(500), ch.close()).await;
+    out.truncated |= count > 65536;
     out.phase = result.0;
-    out.error = result.1;
+    out.error = if out.phase == "cancelled"
+        && (!out.submitted || out.code.is_some() || out.signal.is_some())
+    {
+        None
+    } else {
+        result.1
+    };
     out
 }
 #[derive(Deserialize)]
@@ -493,6 +592,11 @@ impl Controller<'_> {
             &self.request.validate,
             |stream, bytes| self.manager.output(self.id, stream, bytes),
             || self.manager.change(self.id, |r| r.submitted = true),
+            || {
+                self.manager
+                    .change(self.id, |r| r.phase = "foreground-running".into());
+                (self.request.changed)();
+            },
         )
         .await;
         self.manager.change(self.id, |r| {
@@ -544,8 +648,29 @@ impl Controller<'_> {
             .iter()
             .find(|a| a.id == p.action_id)
             .ok_or("actionMissing")?;
-        let out = self.step("status", a, 1).await;
-        match status_value(p, &out) {
+        self.read_status(a, Some(p)).await
+    }
+    async fn read_status(
+        &self,
+        action: &Action,
+        probe: Option<&StatusProbe>,
+    ) -> Result<String, String> {
+        let out = self.step("status", action, 1).await;
+        if out.phase == "cancelled" {
+            return Err(out.error.unwrap_or_else(|| "cancelled".into()));
+        }
+        let result = match probe {
+            Some(p) if p.mode != "vncSessions" => status_value(p, &out),
+            _ if out.phase == "succeeded"
+                && out.code == Some(0)
+                && !out.truncated
+                && out.signal.is_none() =>
+            {
+                tigervnc::status(&self.request.service, &out.stdout)
+            }
+            _ => Err(out.error.clone().unwrap_or_else(|| "probeFailed".into())),
+        };
+        match result {
             Ok(value) => {
                 self.manager.change(self.id, |r| {
                     if let Some(s) = r.steps.last_mut() {
@@ -583,6 +708,8 @@ impl Controller<'_> {
             }
             attempt += 1;
             let a = Action {
+                systemd_launch: None,
+                service_port_variable: false,
                 invocation: None,
                 mode: ExecutionMode::Command,
                 id: "health".into(),
@@ -595,10 +722,16 @@ impl Controller<'_> {
             };
             let out = tokio::time::timeout_at(deadline, self.step("health", &a, attempt)).await;
             let Ok(out) = out else {
+                if self.cancel.is_cancelled() {
+                    return Err("remoteUnknown".into());
+                }
                 self.stage_result("timedOut", Some("readinessTimeout"));
                 self.record(true, "notReady");
                 return Err("readinessTimeout".into());
             };
+            if out.phase == "cancelled" {
+                return Err(out.error.unwrap_or_else(|| "cancelled".into()));
+            }
             if !(self.request.validate)() {
                 self.stage_result("failed", Some("staleAction"));
                 self.record(true, "unknown");
@@ -642,7 +775,7 @@ impl Controller<'_> {
                 return Err("readinessTimeout".into());
             }
             self.stage_result("running", None);
-            tokio::select! {biased;_=self.cancel.cancelled()=>return Err("remoteUnknown".into()),_=tokio::time::sleep_until(next)=>{}}
+            tokio::select! {biased;_=self.cancel.cancelled()=>return Err("cancelled".into()),_=tokio::time::sleep_until(next)=>{}}
         }
     }
     async fn action(&self, action: &Action) -> Result<(), String> {
@@ -655,8 +788,38 @@ impl Controller<'_> {
         if out.phase == "succeeded" {
             Ok(())
         } else {
-            Err(out.error.unwrap_or_else(|| "remoteUnknown".into()))
+            // A definite nonzero exit can still have changed the remote unit. Keep the
+            // action's own exit code in the result and the probe's code in its step.
+            let control = &self.request.service.control;
+            if out.error.as_deref() == Some("exitCode")
+                && matches!(action.kind.as_str(), "start" | "restart" | "stop")
+                && control.check_after_actions
+                && control.status_probe.is_some()
+                && !self.cancel.is_cancelled()
+                && (self.request.validate)()
+            {
+                let _ = self.status().await;
+            }
+            Err(out.error.unwrap_or_else(|| "cancelled".into()))
         }
+    }
+    async fn verify_action_status(&self, kind: &str) -> Result<(), String> {
+        let status = self.status().await?;
+        if self
+            .request
+            .service
+            .control
+            .status_probe
+            .as_ref()
+            .is_some_and(|p| p.mode != "output")
+        {
+            match kind {
+                "start" | "restart" if status != "running" => return Err("startNotRunning".into()),
+                "stop" if status != "stopped" => return Err("stopNotStopped".into()),
+                _ => {}
+            }
+        }
+        Ok(())
     }
     async fn run(&self) -> Result<(), String> {
         let s = &self.request.service;
@@ -673,18 +836,25 @@ impl Controller<'_> {
                     .is_some_and(|p| p.action_id == a.id)
                 {
                     self.status().await?;
+                } else if s.control.status_probe.is_none() && tigervnc::list_action(a) {
+                    // Existing direct templates saved -list as an ordinary command.
+                    self.read_status(a, None).await?;
                 } else {
                     self.action(a).await?;
                     if s.control.check_after_actions
                         && ["start", "restart", "stop", "custom"].contains(&a.kind.as_str())
                     {
                         if s.control.status_probe.is_some() {
-                            self.status().await?;
+                            if a.kind != "stop" && s.control.health_probe.is_some() {
+                                self.status().await?;
+                            } else {
+                                self.verify_action_status(&a.kind).await?;
+                            }
                         }
                         if a.kind != "stop" && s.control.health_probe.is_some() {
                             self.health(true).await?;
                             if s.control.status_probe.is_some() {
-                                self.status().await?;
+                                self.verify_action_status(&a.kind).await?;
                             }
                         }
                     }
@@ -712,12 +882,9 @@ impl Controller<'_> {
                 }
                 if s.control.health_probe.is_some() {
                     self.health(true).await?;
-                    if started
-                        && s.control.status_probe.is_some()
-                        && self.status().await? != "running"
-                    {
-                        return Err("statusUnknown".into());
-                    }
+                }
+                if started && s.control.status_probe.is_some() {
+                    self.verify_action_status("start").await?;
                 }
                 if !(self.request.validate)() {
                     return Err("staleAction".into());
@@ -735,9 +902,13 @@ impl Controller<'_> {
                     });
                 });
                 (self.request.changed)();
-                let result =
-                    (self.request.forward.as_ref().ok_or("ruleMissing")?)(self.cancel.clone())
-                        .await;
+                let forward = self.request.forward.as_ref().ok_or("ruleMissing")?;
+                // A forward launch can be waiting for the worker lock during shutdown.
+                let result = tokio::select! {
+                    biased;
+                    _ = self.cancel.cancelled() => Err("remoteUnknown".into()),
+                    result = forward(self.cancel.clone()) => result,
+                };
                 self.manager.change(self.id, |r| {
                     if let Some(step) = r.steps.last_mut() {
                         step.finished_at = Some(timestamp());
@@ -799,7 +970,7 @@ pub async fn execute(
                 } else {
                     "failed"
                 },
-                Some(error.into()),
+                (!cancel.is_cancelled()).then(|| error.into()),
             );
             (request.changed)();
             return;
@@ -813,12 +984,15 @@ pub async fn execute(
         request: &request,
         connection: &connection,
     };
-    let result = tokio::select! {biased;_=cancel.cancelled()=>Err("remoteUnknown".into()),r=controller.run()=>r};
+    // Let the active step handle cancellation while its SSH channel is still open.
+    let result = controller.run().await;
     connection.close().await;
     if cancel.is_cancelled() || result.as_ref().err().is_some_and(|e| e == "remoteUnknown") {
         observations.invalidate(&request.service, &request.identity);
     }
-    let error = result.err();
+    let error = result
+        .err()
+        .filter(|error| !cancel.is_cancelled() || error == "remoteUnknown");
     let phase = if cancel.is_cancelled() {
         "cancelled"
     } else if error.is_none() {
@@ -837,6 +1011,14 @@ pub async fn execute(
         "failed"
     };
     manager.change(&id, |r| {
+        if request.operation == Operation::Action && r.steps.len() > 1 {
+            // The result header belongs to the requested action. Each subsequent
+            // probe keeps its own exit status, including systemd's stopped code 3.
+            if let Some(code) = r.steps[0].exit_code {
+                r.exit_code = Some(code);
+                r.exit_signal = None;
+            }
+        }
         if let Some(step) = r.steps.last_mut().filter(|s| s.phase == "running") {
             step.phase = phase.into();
             step.error = error.clone();

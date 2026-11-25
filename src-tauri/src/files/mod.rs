@@ -56,6 +56,9 @@ pub struct Session {
     pub id: String,
     pub host_id: String,
     pub host_name: String,
+    pub login_id: String,
+    pub user: String,
+    pub route_key: Option<String>,
     pub phase: String,
     pub fingerprint: Option<String>,
     pub endpoint: Option<String>,
@@ -360,13 +363,20 @@ impl Manager {
         }
     }
     pub fn track(&self, job: tokio::task::JoinHandle<()>) {
-        self.jobs.lock().unwrap().push(job);
+        let mut jobs = self.jobs.lock().unwrap();
+        jobs.retain(|job| !job.is_finished());
+        jobs.push(job);
     }
     pub fn release_refs(&self, id: &str) {
-        self.refs
-            .lock()
-            .unwrap()
-            .retain(|_, e| e.session.as_deref() != Some(id));
+        let mut refs = self.refs.lock().unwrap();
+        let before = refs.len();
+        refs.retain(|_, e| e.session.as_deref() != Some(id));
+        if refs.len() != before {
+            self.ref_order
+                .lock()
+                .unwrap()
+                .retain(|key| refs.contains_key(key));
+        }
     }
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
@@ -1075,9 +1085,7 @@ impl Manager {
             manager.save();
             manager.publish();
         });
-        let mut jobs = self.jobs.lock().unwrap();
-        jobs.retain(|j| !j.is_finished());
-        jobs.push(job);
+        self.track(job);
     }
     fn conflict_policy(&self, id: &str, source: &str, target: &str) -> String {
         let mut tasks = self.tasks.lock().unwrap();

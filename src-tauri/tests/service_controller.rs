@@ -1,7 +1,7 @@
 #![cfg(any(unix, windows))]
 #[path = "common/service_server.rs"]
 mod server;
-use oria_tunnel_lib::{
+use oria_ssh_lib::{
     commands::{Action, Manager, Run, Service},
     model::{timestamp, AuthMethod, Host, Rule},
     service_control::{self as control, Observations, Operation},
@@ -29,6 +29,8 @@ fn host(port: u16) -> Host {
 }
 fn action(id: &str, kind: &str, command: &str) -> Action {
     Action {
+        systemd_launch: None,
+        service_port_variable: false,
         invocation: None,
         mode: Default::default(),
         id: id.into(),
@@ -47,6 +49,7 @@ fn service() -> Service {
         color: None,
         icon: None,
         port: Some(3000),
+        login_by_host: Default::default(),
         host_ids: vec!["execution".into()],
         id: "service".into(),
         name: "Model".into(),
@@ -344,6 +347,257 @@ async fn invalid_unmapped_truncated_or_unknown_status_never_connects_or_starts()
     fixture.shutdown.cancel();
     server.abort();
 }
+#[tokio::test(flavor = "multi_thread")]
+async fn lifecycle_results_keep_command_errors_and_require_the_requested_state() {
+    let (port, fixture, server) = server::start().await;
+    let m = Arc::new(Manager::default());
+    let o = Arc::new(Observations::default());
+    let mut s = service();
+    s.control.health_probe = None;
+    s.control.check_after_actions = true;
+
+    for (id, kind, command, error, exit, state) in [
+        (
+            "failed-start",
+            "start",
+            "fixture-fail",
+            Some("exitCode"),
+            7,
+            "stopped",
+        ),
+        (
+            "early-exit",
+            "start",
+            "fixture-noop",
+            Some("startNotRunning"),
+            0,
+            "stopped",
+        ),
+        ("running", "start", "fixture-start", None, 0, "running"),
+        (
+            "failed-stop",
+            "stop",
+            "fixture-fail",
+            Some("exitCode"),
+            7,
+            "running",
+        ),
+        (
+            "still-running",
+            "stop",
+            "fixture-noop",
+            Some("stopNotStopped"),
+            0,
+            "running",
+        ),
+        ("stopped", "stop", "fixture-stop", None, 0, "stopped"),
+    ] {
+        let mut r = request(port, s.clone(), Operation::Action);
+        r.action = Some(action(id, kind, command));
+        let done = execute(&m, &o, id, r).await;
+        assert_eq!(done.error.as_deref(), error, "{id}");
+        assert_eq!(done.exit_code, Some(exit), "{id}");
+        assert_eq!(done.steps.len(), 2);
+        assert_eq!(o.view(&s, "identity", timestamp()).status.value, state);
+    }
+    let calls = Arc::new(AtomicUsize::new(0));
+    s.actions[0].command = "fixture-noop".into();
+    let mut r = request(port, s, Operation::Connect);
+    r.forward = Some(forward_counter(calls.clone()));
+    let done = execute(&m, &o, "connect-early-exit", r).await;
+    assert_eq!(done.error.as_deref(), Some("startNotRunning"));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    fixture.shutdown.cancel();
+    server.abort();
+}
+#[tokio::test(flavor = "multi_thread")]
+async fn vnc_inventory_records_the_matching_session_for_existing_and_new_profiles() {
+    let (port, fixture, server) = server::start().await;
+    let manager = Arc::new(Manager::default());
+    let facts = Arc::new(Observations::default());
+    let mut profile = service();
+    profile.port = Some(5901);
+    profile.actions[0].command = "'vncserver' ':1' '-localhost' 'yes'".into();
+    profile.actions[2].command = "vncserver -kill :1".into();
+    profile.control.health_probe = None;
+    let mut mapping = profile.control.status_probe.take().unwrap();
+    mapping.mode = "vncSessions".into();
+    let list = fixture.home.path().join("vnc-session-list");
+
+    for (version, command) in ["vncserver -list", "'tigervncserver' '-list'"]
+        .iter()
+        .enumerate()
+    {
+        let legacy = version == 0;
+        profile.actions[1].command = (*command).into();
+        profile.control.status_probe = (!legacy).then(|| mapping.clone());
+        for (index, (output, expected)) in [
+            (
+                "TigerVNC server sessions:\nX DISPLAY # PROCESS ID\n:1 123\n:2 234\n",
+                "running",
+            ),
+            ("X DISPLAY # PROCESS ID\n:2 234\n", "stopped"),
+            ("X DISPLAY # PROCESS ID\n", "stopped"),
+            (
+                "X DISPLAY # RFB PORT # PROCESS ID SERVER\n:1 5901 123 (stale) Xtigervnc\n",
+                "stopped",
+            ),
+            (
+                "X DISPLAY # RFB PORT # RFB UNIX PATH PROCESS ID # SERVER\n1 5901 123 Xtigervnc\n",
+                "running",
+            ),
+            (
+                "X DISPLAY # RFB PORT # PROCESS ID\n:1 5999 123\n",
+                "unknown",
+            ),
+            ("X DISPLAY # PROCESS ID\nmalformed row\n", "unknown"),
+            ("", "unknown"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            std::fs::write(&list, output).unwrap();
+            let mut req = request(
+                port,
+                profile.clone(),
+                if legacy {
+                    Operation::Action
+                } else {
+                    Operation::CheckStatus
+                },
+            );
+            req.action = legacy.then(|| profile.actions[1].clone());
+            let run = execute(&manager, &facts, &format!("vnc-{version}-{index}"), req).await;
+            assert_eq!(
+                run.error.as_deref(),
+                (expected == "unknown").then_some("vncStatusUnknown")
+            );
+            assert_eq!(
+                facts.view(&profile, "identity", timestamp()).status.value,
+                expected
+            );
+        }
+    }
+    // Older wrappers omit RFB ports. A conflicting port and display are inconclusive.
+    std::fs::write(&list, "X DISPLAY # PROCESS ID\n:1 123\n").unwrap();
+    profile.port = Some(5999);
+    let run = execute(
+        &manager,
+        &facts,
+        "vnc-conflict",
+        request(port, profile.clone(), Operation::CheckStatus),
+    )
+    .await;
+    assert_eq!(run.error.as_deref(), Some("vncStatusUnknown"));
+    // Existing profiles can have no port saved. The literal :1 in their commands identifies the session.
+    profile.port = None;
+    let run = execute(
+        &manager,
+        &facts,
+        "vnc-display-only",
+        request(port, profile.clone(), Operation::CheckStatus),
+    )
+    .await;
+    assert_eq!(run.phase, "succeeded");
+    assert_eq!(
+        facts.view(&profile, "identity", timestamp()).status.value,
+        "running"
+    );
+    std::fs::remove_file(list).unwrap();
+    let run = execute(
+        &manager,
+        &facts,
+        "vnc-error",
+        request(port, profile.clone(), Operation::CheckStatus),
+    )
+    .await;
+    assert_eq!(run.phase, "failed");
+    assert_eq!(
+        facts.view(&profile, "identity", timestamp()).status.value,
+        "unknown"
+    );
+    fixture.shutdown.cancel();
+    server.abort();
+}
+#[tokio::test(flavor = "multi_thread")]
+async fn cancelling_foreground_exec_signals_the_channel_and_waits_for_remote_exit() {
+    let (port, fixture, server) = server::start().await;
+    let manager = Arc::new(Manager::default());
+    let observations = Arc::new(Observations::default());
+    let mut req = request(port, service(), Operation::Action);
+    let mut foreground = action("start", "start", "fixture-listen");
+    foreground.timeout_secs = 0;
+    req.action = Some(foreground);
+    let (_, cancel, _) = manager.register(run("listener")).unwrap();
+    let job = tokio::spawn(control::execute(
+        manager.clone(),
+        observations,
+        "listener".into(),
+        cancel,
+        req,
+    ));
+    let listener_port = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let port = fixture.foreground_port.load(Ordering::SeqCst);
+            if port != 0 {
+                break port;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(tokio::net::TcpListener::bind(("127.0.0.1", listener_port))
+        .await
+        .is_err());
+    phase(&manager, "listener", "foreground-running").await;
+    assert!(tokio::net::TcpStream::connect(("127.0.0.1", listener_port))
+        .await
+        .is_ok());
+    manager.cancel("listener").unwrap();
+    tokio::time::timeout(Duration::from_secs(5), job)
+        .await
+        .unwrap()
+        .unwrap();
+    let done = &manager.list()[0];
+    assert_eq!(done.phase, "cancelled");
+    assert_eq!(done.error, None);
+    assert_eq!(done.exit_signal.as_deref(), Some("TERM"));
+    assert!(tokio::net::TcpListener::bind(("127.0.0.1", listener_port))
+        .await
+        .is_ok());
+    fixture.shutdown.cancel();
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn confirmed_exit_finishes_a_status_command_even_if_the_peer_keeps_its_channel_open() {
+    let (port, fixture, server) = server::start().await;
+    let manager = Arc::new(Manager::default());
+    let observations = Arc::new(Observations::default());
+    let mut profile = service();
+    profile.actions[1].command = "fixture-exit-before-close".into();
+    profile.actions[1].timeout_secs = 1;
+    let done = execute(
+        &manager,
+        &observations,
+        "confirmed-exit",
+        request(port, profile.clone(), Operation::CheckStatus),
+    )
+    .await;
+    assert_eq!(done.phase, "succeeded");
+    assert_eq!(done.exit_code, Some(0));
+    assert_eq!(
+        observations
+            .view(&profile, "identity", timestamp())
+            .status
+            .value,
+        "running"
+    );
+    fixture.shutdown.cancel();
+    server.abort();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn cancellation_and_configuration_change_during_wait_prevent_late_forward_and_serialize_shared_service(
 ) {

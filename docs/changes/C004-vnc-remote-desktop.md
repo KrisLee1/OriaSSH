@@ -1,14 +1,14 @@
-# VNC 远程桌面实施方案
+# VNC 远程桌面方案
 
-2026-11-16 · 内置 VNC 远程桌面已随 [v0.3.0](https://github.com/KrisLee1/OriaTunnel/releases/tag/v0.3.0) 发布。第 6 节保留实施前的原型记录，第 7 节定义分阶段验收。Windows x64 已验证安装注册与画面性能，Windows ARM64 已交叉构建安装包。V5 的 macOS 隔离验证与剩余验收项见[项目状态](PROJECT_STATUS.md)。
+2026-11-16 · 内置 VNC 远程桌面已随 [v0.3.0](https://github.com/KrisLee1/OriaSSH/releases/tag/v0.3.0) 发布。第 6 节保留实施前的原型记录，第 7 节定义分阶段验收。Windows x64 已验证安装注册与画面性能，Windows ARM64 已交叉构建安装包。V5 的 macOS 隔离验证与剩余验收项见[项目状态](../PROJECT_STATUS.md)。
 
 ## 1. 产品范围
 
-转发卡片提供一个 VNC 图标。首次点击时，用户选择系统默认 VNC 或应用内 VNC，然后点「此次」或「总是」打开桌面。「此次」仅对本次打开生效；「总是」保存到本机，之后直接打开。用户可以在「设置 → VNC → VNC 客户端」更改此选择。用户也可以从其他应用打开标准 VNC 链接，并在系统中选择 OriaTunnel 处理这类链接。
+转发卡片提供一个 VNC 图标。首次点击时，用户选择系统默认 VNC 或应用内 VNC，然后点「此次」或「总是」打开桌面。「此次」仅对本次打开生效；「总是」保存到本机，之后直接打开。用户可以在「设置 → VNC → VNC 客户端」更改此选择。用户也可以从其他应用打开标准 VNC 链接，并在系统中选择 OriaSSH 处理这类链接。
 
 | 已确定的需求 | 完成时用户能做什么 |
 | --- | --- |
-| 自研客户端，无 noVNC 依赖 | 通过 OriaTunnel 与远端 VNC 服务完成握手、认证、画面更新和交互 |
+| 自研客户端，无 noVNC 依赖 | 通过 OriaSSH 与远端 VNC 服务完成握手、认证、画面更新和交互 |
 | 独立桌面窗口 | 同时打开两个目标，在其中一个窗口断开、重连或关闭，另一个窗口继续使用 |
 | 终端与文件传输 | 在当前 VNC 窗口展开已有 SSH 终端和文件传输面板，在桌面、命令行与文件之间切换 |
 | 键盘、鼠标 | 输入文字和组合键，移动、点击、拖动鼠标、滚动，向远端发送 Ctrl+Alt+Del |
@@ -18,17 +18,17 @@
 
 ## 2. 入口、系统默认与窗口行为
 
-1. **从转发卡片打开。** 沿用现有服务按钮的位置和可用性。通过单个桌面图标打开 VNC；有已记住的客户端时直接使用，否则弹窗选择。Rust 按规则 ID 重新检查工作进程、当前配置和监听状态，生成固定的 `vnc://主机:端口/`，按选择交给系统或直接打开内置桌面。规则已停止或配置已改变时，按钮给出具体原因。HTTP、HTTPS 沿用既有流程。[服务地址生成](../src-tauri/src/service.rs)
-2. **系统选择客户端。** 用户选了第三方客户端，该客户端接收地址；选了 OriaTunnel，操作系统把地址送回 OriaTunnel 的协议入口，后者直接创建桌面窗口。没有可用处理器或打开失败时，显示系统反馈，并指向默认客户端设置。用户可以在设置中切换到应用内 VNC 后重试。
-3. **设置默认客户端。** Windows 安装器把 OriaTunnel 注册为 `vnc` 候选，在应用设置点击「设置为系统默认 VNC」后跳到 Windows 默认应用页面，由用户完成选择。转发卡片的客户端偏好保存在本机，系统协议关联由这个单独的按钮发起设置。安装、升级与应用启动均须尊重既有选择。[Windows 默认应用设置](https://learn.microsoft.com/en-us/windows/apps/develop/launch/launch-default-apps-settings)
+1. **从转发卡片打开。** 沿用现有服务按钮的位置和可用性。通过单个桌面图标打开 VNC；有已记住的客户端时直接使用，否则弹窗选择。Rust 按规则 ID 重新检查工作进程、当前配置和监听状态，生成固定的 `vnc://主机:端口/`，按选择交给系统或直接打开内置桌面。规则已停止或配置已改变时，按钮给出具体原因。HTTP、HTTPS 沿用既有流程。[服务地址生成](../../src-tauri/src/service.rs)
+2. **系统选择客户端。** 用户选了第三方客户端，该客户端接收地址；选了 OriaSSH，操作系统把地址送回 OriaSSH 的协议入口，后者直接创建桌面窗口。没有可用处理器或打开失败时，显示系统反馈，并指向默认客户端设置。用户可以在设置中切换到应用内 VNC 后重试。
+3. **设置默认客户端。** Windows 安装器把 OriaSSH 注册为 `vnc` 候选，在应用设置点击「设置为系统默认 VNC」后跳到 Windows 默认应用页面，由用户完成选择。转发卡片的客户端偏好保存在本机，系统协议关联由这个单独的按钮发起设置。安装、升级与应用启动均须尊重既有选择。[Windows 默认应用设置](https://learn.microsoft.com/en-us/windows/apps/develop/launch/launch-default-apps-settings)
 4. **收到链接。** 冷启动创建桌面窗口；应用已运行或收起到托盘时，交给现有实例创建新窗口。接受主机名、IPv4 和方括号 IPv6，省略端口取 5900，显式端口按 TCP 端口解释。拒绝嵌入凭据、路径参数、查询、片段、无效端口和超长输入。通过校验的目标由新窗口自动连接。
 5. **连接与关闭。** 打开独立窗口即开始握手。服务端要求凭据时，在居中的密码面板显示目标地址，提交后继续连接。握手成功后显示桌面。断线后保留地址与重连动作。关闭桌面窗口释放该桌面会话；原有 SSH 转发继续按自己的规则运行。主窗口收起、桌面窗口关闭和应用退出分别处理。
 
-例如，远端 VNC 监听 `127.0.0.1:5901`，OriaTunnel 已将其转发至本机 `127.0.0.1:15901`。系统客户端收到的地址应是 `vnc://127.0.0.1:15901/`。本地端口正在监听只说明 SSH 转发就绪；密码是否正确、远端桌面是否可用，需要实际 RFB 会话给出结果。
+例如，远端 VNC 监听 `127.0.0.1:5901`，OriaSSH 已将其转发至本机 `127.0.0.1:15901`。系统客户端收到的地址应是 `vnc://127.0.0.1:15901/`。本地端口正在监听只说明 SSH 转发就绪；密码是否正确、远端桌面是否可用，需要实际 RFB 会话给出结果。
 
 ### 2.1 复用主窗口外壳与五区悬浮顶栏
 
-VNC 桌面使用独立 Tauri 窗口，沿用主窗口的外壳容器、平台装饰配置、材质、主题和窗口控件偏好。直接组合 `WindowHeader` 与其内置的 `WindowControl`，顶栏悬浮于桌面内容上方。连接前、输入凭据、查看桌面和断线后均使用同一外壳。五个区域的位置遵循主窗口契约，以下为各区的 VNC 操作建议。[主窗口用法](../src/App.tsx) · [WindowHeader](../src/components/window/window-header.tsx) · [WindowControl](../src/components/window/window-control.tsx)
+VNC 桌面使用独立 Tauri 窗口，沿用主窗口的外壳容器、平台装饰配置、材质、主题和窗口控件偏好。直接组合 `WindowHeader` 与其内置的 `WindowControl`，顶栏悬浮于桌面内容上方。连接前、输入凭据、查看桌面和断线后均使用同一外壳。五个区域的位置遵循主窗口契约，以下为各区的 VNC 操作建议。[主窗口用法](../../src/App.tsx) · [WindowHeader](../../src/components/window/window-header.tsx) · [WindowControl](../../src/components/window/window-control.tsx)
 
 | 区域 | VNC 窗口内容 | 定位与镜像 |
 | --- | --- | --- |
@@ -38,13 +38,13 @@ VNC 桌面使用独立 Tauri 窗口，沿用主窗口的外壳容器、平台装
 | 右内胶囊 `fixedRightActions` | 缩小、适应窗口、放大 | 固定在窗口物理右侧，组内顺序固定 |
 | 桌面工具外胶囊 `children` | 文件传输、终端及「更多 → 发送 Ctrl+Alt+Del」 | 文件传输与终端沿用主窗口顶栏的图标及相邻顺序，整组按现有规则镜像 |
 
-窗口控件在左时，从左到右为「窗口控件｜目标标题｜缩放｜桌面工具」；在右时为「桌面工具｜目标标题｜缩放｜窗口控件」。位置解析与跨窗口偏好同步复用现有设置。窄窗优先将桌面工具收入原胶囊的菜单，保留窗口控件和居中标题。[位置偏好](../src/stores/window-control-settings-store.ts) · [主窗口五区契约](ORIA_TUNNEL_DESIGN.md#32-五个位置的固定契约)
+窗口控件在左时，从左到右为「窗口控件｜目标标题｜缩放｜桌面工具」；在右时为「桌面工具｜目标标题｜缩放｜窗口控件」。位置解析与跨窗口偏好同步复用现有设置。窄窗优先将桌面工具收入原胶囊的菜单，保留窗口控件和居中标题。[位置偏好](../../src/stores/window-control-settings-store.ts) · [主窗口五区契约](../ORIA_SSH_DESIGN.md#32-五个位置的固定契约)
 
 顶栏空白处沿用原生拖窗与双击最大化行为。顶栏按钮、菜单及密码输入接收本地输入；焦点由远端画布移到这些控件时释放已按下的远端按键。画布使用完整窗口高度。光标进入顶部 8 像素立即开始滑入，离开后保留 700 毫秒再收起；期间移回会取消收起。操作菜单和键盘聚焦时保持可见；跟随系统减少动态效果偏好。
 
 ### 2.2 在当前 VNC 窗口打开终端与文件传输
 
-工具胶囊复用主窗口的 `OpenFilesButton` 和 `OpenTerminalButton workspace`。点击即在当前桌面上方展开相应的非模态面板。终端沿用 SSH 主机选择、认证、指纹确认、标签页和交互终端；文件传输沿用本机／远端文件浏览、上传下载及后台队列。两者使用现有工作区 Provider 与共享 `WorkspacePanel` 的停靠、缩放、收起和恢复交互。已打开的面板优先恢复原有标签或目录。[终端工作区](../src/features/terminal/terminal-workspace.tsx) · [文件工作区](../src/features/files/file-workspace.tsx) · [共享面板](../src/components/ui/workspace-panel.tsx)
+工具胶囊复用主窗口的 `OpenFilesButton` 和 `OpenTerminalButton workspace`。点击即在当前桌面上方展开相应的非模态面板。终端沿用 SSH 主机选择、认证、指纹确认、标签页和交互终端；文件传输沿用本机／远端文件浏览、上传下载及后台队列。两者使用现有工作区 Provider 与共享 `WorkspacePanel` 的停靠、缩放、收起和恢复交互。已打开的面板优先恢复原有标签或目录。[终端工作区](../../src/features/terminal/terminal-workspace.tsx) · [文件工作区](../../src/features/files/file-workspace.tsx) · [共享面板](../../src/components/ui/workspace-panel.tsx)
 
 从规则进入时，打开终端或文件面板立即使用该规则的 SSH 主机连接。系统链接优先匹配正在监听的 VNC 转发，其次匹配同地址且已添加的唯一 SSH 主机。如果没有唯一匹配，用户选一次主机即发起连接，两个面板在当前窗口共享此选择。打开 VNC 窗口本身不会发起 SSH 或 SFTP 连接，两个工具在 VNC 等待连接或断线时也可使用。
 
@@ -79,9 +79,9 @@ VNC 桌面使用独立 Tauri 窗口，沿用主窗口的外壳容器、平台装
 
 | 已保留的实现 | 已观察到的结果 | 接续工作 |
 | --- | --- | --- |
-| [Rust 会话与窗口](../src-tauri/src/vnc/mod.rs)、[RFB](../src-tauri/src/vnc/rfb.rs)、[矩形解码](../src-tauri/src/vnc/frame.rs)、[剪贴板](../src-tauri/src/vnc/clipboard.rs) | 原型阶段 4 项专项测试通过，包含真实回环 TCP 密码握手、输入回传、连续 ZRLE 与中文扩展剪贴板交换 | 独立服务端互通、三个协议版本的失败矩阵、慢消费与异常尺寸压力测试 |
-| [独立窗口](../src/features/vnc/VncDesktop.tsx)、[输入映射](../src/features/vnc/input.ts) | 一次 Windows x64 隔离原生测试验证了冷／热链接入口、显式连接、画布实际像素、按键、缩放后的点击位置、200% 缩放、剪贴板消息、断开与退出。测试也验证了桌面窗口调用主窗口快照会被拒绝 | 原生测试使用本地协议夹具；系统剪贴板实拷、活跃窗口直接关闭、多窗口互不影响与 macOS 实机仍需验收 |
-| [Windows 安装钩子](../src-tauri/vnc-installer.nsh)、[macOS 协议声明](../src-tauri/Info.plist)、[卡片入口](../src/features/tunnels/service-protocol.tsx) | Windows x64 调试 NSIS 成功生成；Windows 原生测试直接向程序传入链接 | 在干净系统实际安装、选择默认客户端、通过系统打开链接，再验证升级、切换到第三方及卸载；macOS 验证包内声明、系统关联和前后台唤起 |
+| [Rust 会话与窗口](../../src-tauri/src/vnc/mod.rs)、[RFB](../../src-tauri/src/vnc/rfb.rs)、[矩形解码](../../src-tauri/src/vnc/frame.rs)、[剪贴板](../../src-tauri/src/vnc/clipboard.rs) | 原型阶段 4 项专项测试通过，包含真实回环 TCP 密码握手、输入回传、连续 ZRLE 与中文扩展剪贴板交换 | 独立服务端互通、三个协议版本的失败矩阵、慢消费与异常尺寸压力测试 |
+| [独立窗口](../../src/features/vnc/VncDesktop.tsx)、[输入映射](../../src/features/vnc/input.ts) | 一次 Windows x64 隔离原生测试验证了冷／热链接入口、显式连接、画布实际像素、按键、缩放后的点击位置、200% 缩放、剪贴板消息、断开与退出。测试也验证了桌面窗口调用主窗口快照会被拒绝 | 原生测试使用本地协议夹具；系统剪贴板实拷、活跃窗口直接关闭、多窗口互不影响与 macOS 实机仍需验收 |
+| [Windows 安装钩子](../../src-tauri/vnc-installer.nsh)、[macOS 协议声明](../../src-tauri/Info.plist)、[卡片入口](../../src/features/tunnels/service-protocol.tsx) | Windows x64 调试 NSIS 成功生成；Windows 原生测试直接向程序传入链接 | 在干净系统实际安装、选择默认客户端、通过系统打开链接，再验证升级、切换到第三方及卸载；macOS 验证包内声明、系统关联和前后台唤起 |
 | 当前工作树的构建状态 | 上述验证发生在部分后续编辑之前。最新一次格式检查发现剪贴板复制按钮的 JSX 回调少一个闭合花括号，当前前端源码有语法阻塞 | 保留现场。后续实施首先修复该处，然后重跑类型检查、生产构建、Rust 严格 Clippy、专项及前端全量测试，重新生成验证包 |
 | 原型窗口外壳 | 原型使用自身的 `vnc-toolbar` 排列标题和操作，既有截图与测试对应这一布局 | V1 将操作接入共享外壳的五个区域；在独立窗口上重新验证镜像、固定位置、中心对齐及原生窗口控制 |
 
@@ -105,7 +105,7 @@ VNC 桌面使用独立 Tauri 窗口，沿用主窗口的外壳容器、平台装
 
 ### V2 互通复测
 
-Windows x64 使用独立 Cygwin 目录中的 `tigervnc-server 1.8.0-3`，包文件 `tigervnc-server-1.8.0-3.tar.xz` 的 SHA-256 为 `a7e47ddf9686b65836449d41d0418001aeaafaad10a0c590080232b366edc567`。同一目录须有 `xsetroot`、`xev`、`xrandr` 和 `coreutils`。默认位置为仓库内的 `outputs/vnc-v2/cygwin`，已有独立安装可通过 `ORIATUNNEL_XVNC_ROOT` 指定。[Cygwin 服务端包](https://cygwin.com/packages/summary/tigervnc-server.html)
+Windows x64 使用独立 Cygwin 目录中的 `tigervnc-server 1.8.0-3`，包文件 `tigervnc-server-1.8.0-3.tar.xz` 的 SHA-256 为 `a7e47ddf9686b65836449d41d0418001aeaafaad10a0c590080232b366edc567`。同一目录须有 `xsetroot`、`xev`、`xrandr` 和 `coreutils`。默认位置为仓库内的 `outputs/vnc-v2/cygwin`，已有独立安装可通过 `ORIASSH_XVNC_ROOT` 指定。[Cygwin 服务端包](https://cygwin.com/packages/summary/tigervnc-server.html)
 
 在仓库根目录使用项目的 Node、pnpm 和 Rust 工具链执行：
 
@@ -115,15 +115,15 @@ pnpm tauri build --debug --no-bundle
 node scripts/qa/vnc-tigervnc.mjs
 ```
 
-脚本以 `-displayfd 1 -nolisten tcp -noreset -localhost -interface 127.0.0.1` 启动独立虚拟显示，使用临时 RFB 端口、24 位色深和 VncAuth。测试生成一次性密码，以标准输入交给 `vncpasswd -f`，结束时删除服务端临时认证文件。每次运行均使用新的应用数据、WebView2 配置和空 SSH 配置，在 `outputs/vnc-v2/tiger-*/` 留下截图和 `result.json`。[原生验收脚本](../scripts/qa/vnc-tigervnc.mjs)
+脚本以 `-displayfd 1 -nolisten tcp -noreset -localhost -interface 127.0.0.1` 启动独立虚拟显示，使用临时 RFB 端口、24 位色深和 VncAuth。测试生成一次性密码，以标准输入交给 `vncpasswd -f`，结束时删除服务端临时认证文件。每次运行均使用新的应用数据、WebView2 配置和空 SSH 配置，在 `outputs/vnc-v2/tiger-*/` 留下截图和 `result.json`。[原生验收脚本](../../scripts/qa/vnc-tigervnc.mjs)
 
-真实服务端验证了 RFB 3.8、VncAuth、ZRLE、DesktopSize、键鼠输入、取消和认证失败恢复，也验证了经典剪贴板对中文的降级提示。其余版本／安全类型组合、Raw、CopyRect、扩展剪贴板和异常报文由可重复的协议测试覆盖。Windows 桌面交互见 V3 复测，macOS 归入 V5。[协议矩阵](../src-tauri/src/vnc/protocol_tests.rs) · [回环与剪贴板测试](../src-tauri/src/vnc/tests.rs)
+真实服务端验证了 RFB 3.8、VncAuth、ZRLE、DesktopSize、键鼠输入、取消和认证失败恢复，也验证了经典剪贴板对中文的降级提示。其余版本／安全类型组合、Raw、CopyRect、扩展剪贴板和异常报文由可重复的协议测试覆盖。Windows 桌面交互见 V3 复测，macOS 归入 V5。[协议矩阵](../../src-tauri/src/vnc/protocol_tests.rs) · [回环与剪贴板测试](../../src-tauri/src/vnc/tests.rs)
 
 原先从功能起点到双平台验收估计为 **6–10 人周**。V2 完成后，按一名熟悉项目的开发者且双平台设备可用，后续桌面交互及双平台验收工作合计粗估 **3–6 人周**。主要变量是跨窗口终端和文件任务归属、两端系统剪贴板，以及干净环境的安装、升级和卸载验证。
 
 ### V3 工作面板与交互复测
 
-在 Windows x64 仓库根目录执行以下命令。脚本使用独立应用配置、空 SSH 配置、临时 SFTP 根目录、真实的回环 SSH PTY 和两个回环 RFB 目标。每次运行的结果保存在 `outputs/vnc-v3/native-*/result.json`。[原生复测脚本](../scripts/qa/vnc-workspaces.mjs)
+在 Windows x64 仓库根目录执行以下命令。脚本使用独立应用配置、空 SSH 配置、临时 SFTP 根目录、真实的回环 SSH PTY 和两个回环 RFB 目标。每次运行的结果保存在 `outputs/vnc-v3/native-*/result.json`。[原生复测脚本](../../scripts/qa/vnc-workspaces.mjs)
 
 ```powershell
 cargo build --manifest-path src-tauri/Cargo.toml --example terminal_fixture
@@ -132,7 +132,7 @@ pnpm tauri build --debug --no-bundle
 node scripts/qa/vnc-workspaces.mjs
 ```
 
-默认流程通过 WebView2 拒绝剪贴板读写，核对手动粘贴送达的文本与复制框中的远端文本。在一次性 Windows 测试账户中，可以预先将纯文本标记放入系统剪贴板，并将相同标记写入环境变量 `ORIATUNNEL_QA_CLIPBOARD_MARKER`。脚本核对标记后会实际读写系统剪贴板，验证中英文多行双向传输，再走权限拒绝流程。TigerVNC 的经典 Latin-1 路径使用上一节的脚本复测。
+默认流程通过 WebView2 拒绝剪贴板读写，核对手动粘贴送达的文本与复制框中的远端文本。在一次性 Windows 测试账户中，可以预先将纯文本标记放入系统剪贴板，并将相同标记写入环境变量 `ORIASSH_QA_CLIPBOARD_MARKER`。脚本核对标记后会实际读写系统剪贴板，验证中英文多行双向传输，再走权限拒绝流程。TigerVNC 的经典 Latin-1 路径使用上一节的脚本复测。
 
 ### V4 Windows 安装与性能复测
 
@@ -141,12 +141,12 @@ node scripts/qa/vnc-workspaces.mjs
 ```powershell
 pnpm tauri build --debug --bundles nsis
 pwsh -NoProfile -File scripts/qa/vnc-install.ps1 -Template src-tauri/target/debug/nsis/x64/installer.nsi -CheckSettings
-node scripts/qa/vnc-windows-performance.mjs src-tauri/target/debug/oria-tunnel.exe
+node scripts/qa/vnc-windows-performance.mjs src-tauri/target/debug/oria-ssh.exe
 ```
 
-安装测试使用 Tauri 生成的 NSIS 模板、实际应用二进制和安装钩子，替换测试产品名、协议名与安装目录。先在此前未注册的协议上安装、卸载，再加入能接收链接并读取 RFB 握手的外部客户端夹具，执行重装和升级。两个测试版本使用同一份应用程序。脚本核对系统设置页、注册命令、安装文件摘要、旧卸载程序的清理范围以及测试前后的真实 VNC 默认项。冷启动及驻留唤起使用 Windows Shell 和显式指定的已安装应用类，两次均核对远端像素与窗口归属。[安装与设置页脚本](../scripts/qa/vnc-install.ps1) · [链接分派夹具](../scripts/qa/vnc-installed-links.mjs)
+安装测试使用 Tauri 生成的 NSIS 模板、实际应用二进制和安装钩子，替换测试产品名、协议名与安装目录。先在此前未注册的协议上安装、卸载，再加入能接收链接并读取 RFB 握手的外部客户端夹具，执行重装和升级。两个测试版本使用同一份应用程序。脚本核对系统设置页、注册命令、安装文件摘要、旧卸载程序的清理范围以及测试前后的真实 VNC 默认项。冷启动及驻留唤起使用 Windows Shell 和显式指定的已安装应用类，两次均核对远端像素与窗口归属。[安装与设置页脚本](../../scripts/qa/vnc-install.ps1) · [链接分派夹具](../../scripts/qa/vnc-installed-links.mjs)
 
-性能测试使用独立配置，在画质模式下连接本机 RFB 3.8 服务端。两种远端分辨率分别测静止画面、CopyRect 滚动、32×32 小块与 Raw 整屏更新。输入延迟从注入鼠标移动计到 WebView2 画布读到服务端回显像素，可见更新数按浏览器重绘采样。暂停 4K 画布消费后检查服务端请求是否停止，恢复后核对末帧，关闭窗口后核对 TCP 释放并采样工作集。工作集为应用及 WebView2 子进程采样之和，共享页可能重复计数。每次测试在 `outputs/vnc-v4/` 的独立子目录保存 `result.json`。[性能脚本](../scripts/qa/vnc-windows-performance.mjs)
+性能测试使用独立配置，在画质模式下连接本机 RFB 3.8 服务端。两种远端分辨率分别测静止画面、CopyRect 滚动、32×32 小块与 Raw 整屏更新。输入延迟从注入鼠标移动计到 WebView2 画布读到服务端回显像素，可见更新数按浏览器重绘采样。暂停 4K 画布消费后检查服务端请求是否停止，恢复后核对末帧，关闭窗口后核对 TCP 释放并采样工作集。工作集为应用及 WebView2 子进程采样之和，共享页可能重复计数。每次测试在 `outputs/vnc-v4/` 的独立子目录保存 `result.json`。[性能脚本](../../scripts/qa/vnc-windows-performance.mjs)
 
 4K 整屏对比使用同一个性能脚本，分别传入优化前后的 x64 调试程序。两版各运行三轮，交替执行。每轮的 `continuousFull` 让服务端按请求交替发送两幅逐像素变化的 3840×2160 Raw 图案。帧序号和鼠标回显分开编码在画布标记中。预热 1 秒后，按不同间隔发送 9 次鼠标移动，持续观察至少 6 秒。服务端只在收到输入后才将回显写入下一帧。以可见帧数除以采样时长计算每轮帧率，三轮取中位数。27 次输入回显合并计算中位数。结果同时记录程序摘要、浏览器版本、实际画布尺寸及共享像素包数量。
 
@@ -154,7 +154,7 @@ node scripts/qa/vnc-windows-performance.mjs src-tauri/target/debug/oria-tunnel.e
 
 要测整屏刷新期间的可见帧率和输入回显，在程序路径后传 `--4k-only --4k-viewport --compositor`。将 `--4k-viewport` 换成 `--enlarged-viewport` 可测 3952×2223（247/240 倍）。两种配置都从 WebView2 合成输出采集帧序号与回显像素，计时期间不读回应用画布。结果同时保留鼠标移动到达 RFB 服务端的时间、画布自身分辨率和实际显示尺寸。同样两个视口参数可单独传给 `scripts/qa/vnc-render.mjs`，验证移动矩形与整帧重绘的一致性、分段提交和全屏留白。
 
-剩余平台验收使用独立 Windows 账户和正式产品标识。在系统设置中实际将 `vnc://` 的默认客户端从第三方切换为 OriaTunnel，直接打开回环链接并再次唤起，切回第三方后升级、卸载并重新打开链接。Windows ARM64 还需在原生设备上运行安装、链接与画面复测。
+剩余平台验收使用独立 Windows 账户和正式产品标识。在系统设置中实际将 `vnc://` 的默认客户端从第三方切换为 OriaSSH，直接打开回环链接并再次唤起，切回第三方后升级、卸载并重新打开链接。Windows ARM64 还需在原生设备上运行安装、链接与画面复测。
 
 ### V5 macOS 兼容与测试（最终阶段）
 

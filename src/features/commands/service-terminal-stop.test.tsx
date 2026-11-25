@@ -6,6 +6,7 @@ import { serviceForegroundSession } from "@/features/terminal/terminal-model";
 import i18n from "@/i18n";
 import { emptyHost, emptyRule } from "@/features/tunnels/rule-model";
 import {
+  HostServices,
   PresetCommandProvider,
   ServiceCommandsButton,
 } from "./preset-commands";
@@ -186,6 +187,33 @@ describe("foreground service stop", () => {
     expect(stop.disabled).toBe(false);
     stop.click();
     expect(state.stop).toHaveBeenCalledExactlyOnceWith(service, "forward");
+  });
+  it("offers Start and Check together when TigerVNC status is unknown", () => {
+    state.running = false;
+    const host = { ...emptyHost(), id: "host" };
+    const tigerVnc: RemoteService = {
+      ...service,
+      name: "TigerVNC",
+      hostIds: [host.id],
+      actions: [
+        { ...service.actions[0], label: "Start TigerVNC", command: "vncserver :3" },
+        { ...service.actions[0], id: "status", kind: "status", command: "vncserver -list" },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <PresetCommandProvider
+        data={{ hosts: [host], services: [tigerVnc], rules: [], runtimes: [] } as unknown as Snapshot}
+        onSnapshot={() => {}}
+      >
+        <HostServices host={host} canLink={false} />
+      </PresetCommandProvider>,
+    );
+    const buttons = html.match(/<button\b.*?<\/button>/g) ?? [];
+    const checkLabel = i18n.t("service.checkStatus", { ns: "commands" });
+    expect(buttons.find((button) => button.includes(`aria-label="${checkLabel} TigerVNC"`))).toBeDefined();
+    const start = buttons.find((button) => button.endsWith("Start TigerVNC</button>"));
+    expect(start).toBeDefined();
+    expect(start).not.toMatch(/\sdisabled(?:=|\s|>)/);
   });
   it("disables terminal Stop when there is no matching terminal or while closing", () => {
     state.running = false;

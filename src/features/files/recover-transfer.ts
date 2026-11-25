@@ -1,6 +1,20 @@
-import type { Task } from "./api";
+import type { Session, Task } from "./api";
 
 export type FileSide = "local" | "remote";
+
+export function connectedTransferSession(
+  sessions: Session[],
+  hostId: string,
+  sessionId: string,
+  routeKey?: string,
+) {
+  const connected = sessions.filter(
+    (session) => session.hostId === hostId && session.phase === "connected",
+  );
+  return connected.find((session) => session.id === sessionId) ??
+    (routeKey ? connected.find((session) => session.routeKey === routeKey) : undefined);
+}
+
 type SessionFor = (
   hostId: string,
   savedId: string,
