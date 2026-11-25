@@ -531,11 +531,20 @@ Function .onInit
     StrCpy $UpdateMode 1
   ${EndIf}
 
-  !if "${DISPLAYLANGUAGESELECTOR}" == "true"
-    !insertmacro MUI_LANGDLL_DISPLAY
-  !endif
-
   !insertmacro SetContext
+
+  !if "${DISPLAYLANGUAGESELECTOR}" == "true"
+    ; Passive updates can follow a silent install with no saved language.
+    ; Use the stored choice when present, otherwise keep the system language.
+    ${If} $PassiveMode = 1
+      ReadRegStr $0 "${MUI_LANGDLL_REGISTRY_ROOT}" "${MUI_LANGDLL_REGISTRY_KEY}" "${MUI_LANGDLL_REGISTRY_VALUENAME}"
+      ${If} $0 != ""
+        StrCpy $LANGUAGE $0
+      ${EndIf}
+    ${Else}
+      !insertmacro MUI_LANGDLL_DISPLAY
+    ${EndIf}
+  !endif
 
   ${If} $INSTDIR == "${PLACEHOLDER_INSTALL_DIR}"
     ; Set default install location

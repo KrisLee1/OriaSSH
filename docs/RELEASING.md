@@ -26,7 +26,7 @@
    )
    ```
 
-4. 更名已合入 `master`，发布工作流使用 `KrisLee1/OriaSSH`。发布 v1.0.0 前，须在隔离的 macOS 和 Windows 安装中从 v0.5.0 更新，检查重启、工作区、登录启动及 VNC 关联。Windows 同时核对已有安装目录、卸载条目和快捷方式。
+4. 更名已合入 `master`，发布工作流使用 `KrisLee1/OriaSSH`。发布 v1.0.0 前，须在隔离的 macOS 和 Windows 安装中从 v0.5.0 更新，检查重启、工作区、登录启动及 VNC 关联。Windows 同时核对已有安装目录、卸载条目和快捷方式。被动更新沿用已保存的安装语言，缺少此偏好时使用系统语言。
 
 macOS 应用内更新替换现有的应用包。原来装在 `/Applications/OriaTunnel.app` 的副本可继续使用该路径，应用内显示 OriaSSH。新的安装映像提供 `OriaSSH.app`。
 

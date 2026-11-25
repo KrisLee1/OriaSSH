@@ -70,7 +70,29 @@ def windows(temp, assets, arch, profile):
     startup = r"Software\Microsoft\Windows\CurrentVersion\Run"
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, startup) as reg:
         winreg.SetValueEx(reg, "OriaTunnel", 0, winreg.REG_SZ, f'"{old}" --background')
-    run(str(assets / ("OriaSSH_1.0.0_" + suffix)), "/P", "/UPDATE")
+    installer = assets / ("OriaSSH_1.0.0_" + suffix)
+    with subprocess.Popen([str(installer), "/P", "/UPDATE"]) as update:
+        try:
+            status = update.wait(timeout=180)
+        except subprocess.TimeoutExpired:
+            # Record only the fixture installer's visible controls on the hosted runner.
+            try:
+                run("powershell", "-NoProfile", "-Command", """
+Add-Type -AssemblyName UIAutomationClient
+$ui = [System.Windows.Automation.AutomationElement]
+$condition = New-Object System.Windows.Automation.PropertyCondition($ui::ProcessIdProperty, [int]$env:ORIA_QA_INSTALLER_PID)
+$windows = $ui::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $condition)
+foreach ($window in $windows) {
+    $window.Current.Name
+    $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |
+        ForEach-Object { $_.Current.Name } | Select-Object -First 30
+}
+""", env={**os.environ, "ORIA_QA_INSTALLER_PID": str(update.pid)})
+            finally:
+                update.kill()
+            raise
+        if status != 0:
+            raise subprocess.CalledProcessError(status, str(installer))
     new = folder / "oria-ssh.exe"
     assert value(key, "DisplayName") == "OriaSSH" and value(key, "DisplayVersion") == "1.0.0"
     assert Path(value(key, "InstallLocation").strip('"')) == folder
