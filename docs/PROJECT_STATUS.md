@@ -1,16 +1,20 @@
 # OriaSSH 项目状态
 
-当前公开版本为以 OriaTunnel 名义发布的 [v0.5.0](https://github.com/KrisLee1/OriaTunnel/releases/tag/v0.5.0)，于 2026-11-19 设为 Latest。[本版更新说明](releases/v0.5.0.md)
+当前公开版本为 OriaSSH v1.0.0，已于 2026-11-25 设为 GitHub Latest。[下载安装](https://github.com/KrisLee1/OriaSSH/releases/tag/v1.0.0) · [本版更新说明](releases/v1.0.0.md)
 
-## OriaSSH 1.0.0 发布准备（2026-11-25）
+## OriaSSH 1.0.0 正式发布（2026-11-25）
 
-四处应用版本已同步为 1.0.0。八种语言的 README 使用官网交互演示的连接图、终端分屏、文件传输队列及 VNC 桌面截图。1.0 的使用入口、升级与分享说明见[使用指南](USAGE.md)和[更新说明](releases/v1.0.0.md)。
+八种语言的 README 使用官网交互演示的连接图、终端分屏、文件传输队列及 VNC 桌面截图。1.0 的使用入口、升级与分享说明见[使用指南](USAGE.md)。
+
+标签 `v1.0.0` 对应提交 `b6025a6`。macOS Apple Silicon、macOS Intel、Windows x64 和 Windows ARM64 均通过 CI。四组隔离环境分别安装并启动 OriaTunnel v0.5.0，覆盖升级到 OriaSSH v1.0.0 后再次启动并核对已有配置。[持续集成](https://github.com/KrisLee1/OriaSSH/actions/runs/45586738380) · [签名构建与升级验收](https://github.com/KrisLee1/OriaSSH/actions/runs/45586842141)
+
+正式发布流程重新下载并校验了草稿产物。发布后已从公网核对四个安装包及两个 macOS 更新归档均可下载，OriaTunnel 和 OriaSSH 的更新地址返回同一份 1.0.0 清单，包含四个平台的更新签名。[正式发布记录](https://github.com/KrisLee1/OriaSSH/actions/runs/45593867151) · [公开更新清单](https://github.com/KrisLee1/OriaSSH/releases/latest/download/latest.json)
 
 ## OriaSSH 更名（2026-11-25）
 
 应用、八种语言的界面和 README、图标资源、软件包及后续发布流程已采用 OriaSSH。旧工作区导出文件仍可导入。应用继续使用原系统标识、凭据库和偏好键，以便已有用户读取原数据。macOS 保留登录启动项依赖的内部可执行文件名。Windows 安装器沿用已有安装记录，并在覆盖升级时更新本应用的快捷方式和登录启动路径。
 
-macOS 调试应用已构建，Windows NSIS 安装脚本已用隔离夹具交叉编译。签名发行版的实机覆盖升级仍待发布验收。仓库切换步骤、旧版更新地址验证和升级验收见[发布指南](RELEASING.md#github-仓库更名)。
+覆盖升级验收核对了 macOS 原安装路径、内部可执行文件名和 VNC 协议注册，以及 Windows 安装记录、快捷方式、登录启动项和 VNC 关联。[发布指南](RELEASING.md#github-仓库更名)
 
 ## 主机发现、配置保存与大工作区性能（2026-11-25）
 
